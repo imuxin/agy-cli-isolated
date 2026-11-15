@@ -1,0 +1,86 @@
+name: Sync Upstream agy-cli
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 每天 UTC 02:00 (北京时间 10:00) 自动检查
+  workflow_dispatch:     # 支持手动一键触发
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Split upstream packages/agy-cli history
+        run: |
+          git remote get-url upstream >/dev/null 2>&1 || git remote add upstream https://github.com/magpie-community/plugins.git
+          git fetch upstream main
+          git branch -D upstream-agy-cli 2>/dev/null || true
+          git subtree split --prefix=packages/agy-cli upstream/main -b upstream-agy-cli
+
+      - name: Check for new upstream commits
+        id: check
+        run: |
+          COUNT=$(git rev-list HEAD..upstream-agy-cli --count)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Upstream commits ahead: $COUNT"
+
+      - name: Setup Bun
+        if: steps.check.outputs.count != '0'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Merge upstream, run tests, and open PR
+        if: steps.check.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="sync/upstream-agy-cli"
+          git checkout -B "$BRANCH" main
+
+          if git merge --no-edit -X patience upstream-agy-cli; then
+            # 保护 package.json 中的包名、内联图标与隔离版本号后缀不被上游覆盖
+            bun -e '
+              import fs from "node:fs";
+              import { execFileSync } from "node:child_process";
+
+              const basePkg = JSON.parse(execFileSync("git", ["show", "main:package.json"], { encoding: "utf8" }));
+              const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              pkg.name = basePkg.name || "agy-cli-isolated";
+              if (!/-isolated\./.test(pkg.version)) {
+                pkg.version = `${pkg.version}-isolated.1`;
+              }
+              if (basePkg.magpie?.icon) {
+                pkg.magpie = { ...pkg.magpie, icon: basePkg.magpie.icon };
+              }
+              fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+            '
+            git diff --quiet || git commit -am "chore: preserve agy-cli-isolated package metadata"
+            bun test
+            STATUS="✅ Clean merge & all tests passed"
+          else
+            # 如有冲突，中止自动合并并推送 upstream-agy-cli 分支提醒人工处理
+            git merge --abort
+            git push -f origin upstream-agy-cli:refs/heads/upstream-agy-cli
+            echo "::error::Merge conflict detected; pushed branch upstream-agy-cli for manual resolution."
+            exit 1
+          fi
+
+          git push -f origin "$BRANCH"
+          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -qx OPEN; then
+            gh pr edit "$BRANCH" --body "$STATUS"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "chore(sync): backport upstream agy-cli changes" \
+              --body "$STATUS"
+          fi
