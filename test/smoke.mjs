@@ -90,7 +90,11 @@ if (argv.includes("models")) {
 }
 if (argv[0] === "acp" && argv.includes("--help")) {
   log({ type: "acpHelp" })
-  process.stderr.write("Usage of acp:\n  --agent string\n  --include-default-customizations\n    \tload the default customizations (default true)\n")
+  if (fs.existsSync(path.join(process.env.FAKE_AGY_STATE, "old-cli"))) {
+    process.stderr.write("Usage of agy:\nAvailable subcommands:\n  models\n  update\n")
+    process.exit(0)
+  }
+  process.stderr.write("Usage of acp:\n  --login\n  --agent string\n  --include-default-customizations\n    \tload the default customizations (default true)\n")
   process.exit(0)
 }
 if (argv[0] !== "acp") {
@@ -699,8 +703,8 @@ const echoTool = {
     additionalProperties: false,
   },
 }
-const model = "agy-cli/gemini-test"
-const legacyModel = "agy-cli/gemini-test-low"
+const model = "agy-cli-isolated/gemini-test"
+const legacyModel = "agy-cli-isolated/gemini-test-low"
 
 {
   const usage = await plugin.auth.usage(async () => ({ key: "agy" }), {})
@@ -747,6 +751,60 @@ const legacyModel = "agy-cli/gemini-test-low"
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   try { fs.unlinkSync(probeWrapper) } catch {}
+}
+
+{
+  // agy 1.2.11 exists on PATH but has no ACP subcommand. An explicit
+  // old AGY_PATH must fail before login, with an actionable version error.
+  const oldWrapper = path.join(path.dirname(wrapper), "old-" + path.basename(wrapper))
+  const marker = path.join(stateDir, "old-cli")
+  fs.copyFileSync(wrapper, oldWrapper)
+  fs.chmodSync(oldWrapper, 0o755)
+  process.env.AGY_PATH = oldWrapper
+  fs.writeFileSync(marker, "")
+  const before = logs().filter(event => event.type === "login").length
+  try {
+    check("an old CLI is not considered installed for ACP login", await plugin.auth.cli.installed() === false)
+    for (const [name, run] of [
+      ["ordinary sign-in", () => plugin.auth.methods[0].authorize()],
+      ["account switch", () => plugin.auth.methods[1].authorize()],
+      ["CLI install hook", () => plugin.auth.cli.install()],
+    ]) {
+      let error = ""
+      try { await run() } catch (cause) { error = String(cause.message) }
+      check(name + " rejects an explicitly selected old CLI", /has no.*agy acp --login/.test(error) && /1\.5\.0/.test(error) && /AGY_PATH/.test(error), error)
+    }
+    check("old CLI rejection never starts a sign-in", logs().filter(event => event.type === "login").length === before)
+  } finally {
+    process.env.AGY_PATH = wrapper
+    fs.rmSync(marker, { force: true })
+    fs.rmSync(oldWrapper, { force: true })
+  }
+  check("a CLI that advertises terminal login is installed", await plugin.auth.cli.installed() === true)
+
+  const uncachedWrapper = path.join(path.dirname(wrapper), "profile-err-" + path.basename(wrapper))
+  fs.copyFileSync(wrapper, uncachedWrapper)
+  fs.chmodSync(uncachedWrapper, 0o755)
+  const previousProfile = process.env.AGY_BRIDGE_PROFILE
+  process.env.AGY_PATH = uncachedWrapper
+  process.env.AGY_BRIDGE_PROFILE = "invalid-profile-mode"
+  try {
+    for (const [name, run] of [
+      ["CLI installed check", () => plugin.auth.cli.installed()],
+      ["CLI install hook", () => plugin.auth.cli.install()],
+      ["ordinary sign-in", () => plugin.auth.methods[0].authorize()],
+      ["account switch", () => plugin.auth.methods[1].authorize()],
+    ]) {
+      let error = ""
+      try { await run() } catch (cause) { error = String(cause.message) }
+      check(name + " surfaces ProfileError instead of masking it as an old CLI", /^agy profile:/.test(error) && !/agy acp --login/.test(error), error)
+    }
+  } finally {
+    if (previousProfile === undefined) delete process.env.AGY_BRIDGE_PROFILE
+    else process.env.AGY_BRIDGE_PROFILE = previousProfile
+    process.env.AGY_PATH = wrapper
+    fs.rmSync(uncachedWrapper, { force: true })
+  }
 }
 
 {
@@ -818,7 +876,7 @@ async function launchedModel(body) {
   check("high thinking budget selects high", await launchedModel({ model, thinking: { type: "enabled", budget_tokens: 24000 }, messages: [{ role: "user", content: "MODEL high effort" }] }) === "gemini-test-high")
   check("output effort without thinking keeps the default", await launchedModel({ model, output_config: { effort: "low" }, messages: [{ role: "user", content: "MODEL title request" }] }) === "gemini-test-high")
   check("legacy effort ids pass through unchanged", await launchedModel({ model: legacyModel, thinking: { type: "enabled", budget_tokens: 10000 }, messages: [{ role: "user", content: "MODEL legacy id" }] }) === "gemini-test-low")
-  check("single-effort model requests pass through unchanged", await launchedModel({ model: "agy-cli/claude-test-medium", thinking: { type: "enabled", budget_tokens: 4096 }, messages: [{ role: "user", content: "MODEL singleton" }] }) === "claude-test-medium")
+  check("single-effort model requests pass through unchanged", await launchedModel({ model: "agy-cli-isolated/claude-test-medium", thinking: { type: "enabled", budget_tokens: 4096 }, messages: [{ role: "user", content: "MODEL singleton" }] }) === "claude-test-medium")
   check("modern sessions select models and levels through ACP config options", logs().some(event => event.type === "setConfig" && event.configId === "model") && logs().some(event => event.type === "setConfig" && event.configId === "thought_level" && event.value === "low"))
   const offered = await plugin.provider.models()
   check("a model the session offers is served once offered", offered["claude-test-medium"]?.capabilities?.input?.image === true, Object.keys(offered).join(","))
@@ -887,7 +945,7 @@ async function launchedModel(body) {
   const user = lastOf("user")
   check("ACP session uses the isolated agent", ["tools: []", "inheritMcp: false", "inheritCustomizations: false"].every(line => init.agentConfig.includes(line)), init.agentConfig)
   check("agy keeps its own prompt components by default", !init.agentConfig.includes("excludeDefaultComponents"), init.agentConfig)
-  check("ACP client names itself, not an editor", init.clientInfo?.name === "opencode-agy-cli-auth" && init.clientInfo?.version === JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version, JSON.stringify(init.clientInfo))
+  check("ACP client names itself, not an editor", init.clientInfo?.name === "agy-cli-isolated" && init.clientInfo?.version === JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version, JSON.stringify(init.clientInfo))
   // bzs_1 on X (11-15): Antigravity turns away agents' prompts appended to
   // agy's own with a bare 429, so they go in the first user turn by default.
   check("client system prompt is not appended to agy's own", init.systemAppend === null, JSON.stringify(init.systemAppend))
@@ -2568,7 +2626,7 @@ for (const location of ["inline", "system", "developer", "user"]) {
   // type:"prompt" hook request with claude-haiku small-fast model alias + output_config.format json_schema,
   // plus historical server_tool_use/web_search_tool_result and search_result blocks.
   const promptHookRes = await callFetch({
-    model: "agy-cli/claude-haiku-4-5-20251001",
+    model: "agy-cli-isolated/claude-haiku-4-5-20251001",
     stream: false,
     output_config: {
       format: {

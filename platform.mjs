@@ -1,12 +1,16 @@
 import { spawn } from "node:child_process"
 import path from "node:path"
+import { accountProfile, agyEnvironment } from "./profile.mjs"
 
 export function agyCandidates(env, home, platform = process.platform) {
   const windows = platform === "win32"
   const paths = windows ? path.win32 : path.posix
   const names = windows ? ["agy.exe", "agy.cmd", "agy.bat"] : ["agy"]
   const searchPath = env.PATH || (windows ? env.Path : "") || ""
+  const own = ownAgyPath(env, home, platform)
+  const isolated = accountProfile(env, platform, home) !== null
   const candidates = env.AGY_PATH ? [env.AGY_PATH] : []
+  if (isolated) candidates.push(own)
   for (const directory of searchPath.split(windows ? ";" : ":")) {
     if (directory) candidates.push(...names.map(name => paths.join(directory.replace(/^"|"$/g, ""), name)))
   }
@@ -17,9 +21,9 @@ export function agyCandidates(env, home, platform = process.platform) {
     paths.join(home, ".gemini", "bin"),
   ] : [paths.join(home, ".local", "bin"), paths.join(home, ".gemini", "bin"), "/usr/local/bin", "/opt/homebrew/bin"]
   for (const directory of directories) candidates.push(...names.map(name => paths.join(directory, name)))
-  // the copy the plugin installed itself (install.mjs), last: an agy the
-  // user installed wins
-  candidates.push(ownAgyPath(env, home, platform))
+  // Shared mode keeps the upstream search order. Isolated mode uses its
+  // managed CLI first, so an older host installation cannot shadow it.
+  if (!isolated) candidates.push(own)
   return candidates
 }
 
@@ -108,7 +112,7 @@ export function childEnv(parent = process.env, extra = {}, platform = process.pl
 
 export function spawnAgy(file, args, options = {}) {
   const command = agySpawnSpec(file, args)
-  const env = childEnv(process.env, options?.env)
+  const env = agyEnvironment(childEnv(process.env, options?.env))
   return spawn(command.file, command.args, { ...options, ...command.options, windowsHide: true, env })
 }
 

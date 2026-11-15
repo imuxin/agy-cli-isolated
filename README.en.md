@@ -1,4 +1,4 @@
-# agy-cli
+# agy-cli-isolated
 
 Turn the local Antigravity CLI (`agy`) into a model provider inside Magpie. Once
 it is set up, clients such as OpenCode and Claude Code can reach the models agy
@@ -17,7 +17,7 @@ response.
 
 - The work is done by the real agy CLI over the ACP channel it ships with. The
   ACP handshake's `clientInfo` is the plugin's own package name and version
-  (`opencode-agy-cli-auth`), not Zed or any other editor, and the plugin does
+  (`agy-cli-isolated`), not Zed or any other editor, and the plugin does
   not call Google's internal endpoints directly.
 - Tools that belong to the client, such as file reads, writes and shell commands,
   are exposed to the model over MCP. The client runs them and the results flow
@@ -129,10 +129,13 @@ turn); the models a client gets remain agy's decision.
   checked against its sha512, and kept in the data folder
   (`$XDG_DATA_HOME/magpie-agy-cli/agy`, else `~/.local/share/magpie-agy-cli/agy`;
   `%LOCALAPPDATA%\magpie-agy-cli\agy.exe` on Windows). In the container that
-  folder is on the /config volume, so it survives a restart. An agy you
-  installed yourself comes first. Signing in from Magpie
-  needs agy 1.5.0 or later (`agy acp --login`); with an older one, run `agy` in
-  a terminal once to sign in. Text and tool calls have been verified on 1.4.12
+  folder is on the /config volume, so it survives a restart. Shared mode prefers
+  your installed agy; macOS isolated mode prefers the plugin-managed copy.
+  Magpie login requires `agy acp --login` (agy 1.5.0 or later), checked in help
+  output before sign-in. In isolated mode, a missing or incompatible CLI triggers
+  installation of a separate managed copy without replacing your host CLI.
+  An incompatible explicit `AGY_PATH` fails with instructions to update that path.
+  Text and tool calls have been verified on 1.4.12
   and 1.5.0; image input needs 1.5.0.
 - A Magpie build with OpenCode-style provider plugin support. Usage reporting was
   verified on Magpie 0.1.1599.
@@ -150,24 +153,40 @@ turn); the models a client gets remain agy's decision.
   hours after, and a new version is downloaded, checked and tried before it
   replaces the old one. Not when you set `AGY_CLI_DISABLE_AUTO_UPDATE`.
 
+## Separate Magpie and Antigravity accounts on macOS
+
+This fork defaults to one private account environment on macOS. Sign in to account A in Magpie while the Antigravity application and ordinary terminal `agy` keep account B. Install this local fork with `magpie plugin add /absolute/path/to/agy-cli/opencode.mjs`; the community npm package does not include these changes. The fork uses provider ID `agy-cli-isolated`, distinct from upstream `agy-cli`. Restart Magpie and sign in again. Existing credentials, sessions and model caches are not copied into the private environment.
+
+The default root is `$XDG_STATE_HOME/magpie-agy-bridge/profile`, or `~/.local/state/magpie-agy-bridge/profile`. It contains `home/.gemini`, a private `home/Library/Keychains/account.keychain-db`, private `home/Library/Preferences/com.apple.security.plist`, a `keychain-password` file (random, nonempty password, mode 0600), and `state/` for session and model indexes. Back up and protect the whole directory as credentials.
+
+Login, model discovery, ACP probes, sessions, stored email and usage share this environment. Only child processes receive the private HOME/XDG directories. The host home is never mirrored. API key, ADC and Vertex authentication variables are removed from child environments so they cannot override the profile's Google account. Binary discovery and network/proxy settings still use the host environment.
+
+Before starting agy, the plugin sets, unlocks and verifies the private default keychain and search list. Idle and sleep auto-lock are disabled to let long-lived ACP processes renew tokens; processes do not lock the keychain on exit because other processes may still use it. It stays unlocked until the OS session ends or it is manually locked, and is unlocked again before the next child starts. Initialization, conflicting configuration and credential-read failures stop login, requests or usage reads instead of using host credentials. Failed model discovery keeps the previous catalog or static model list without refreshing it.
+
+Set `AGY_BRIDGE_PROFILE_DIR` to an absolute path in the **Magpie process environment** to change the root, then restart. Do not change profiles in a running process. Existing `AGY_BRIDGE_GEMINI_DIR`, `AGY_BRIDGE_STATE_FILE` and `AGY_BRIDGE_CONVERSATIONS_DIR` overrides must match the profile's paths, or be removed. `AGY_BRIDGE_STORED_SIGNIN=skip` is unavailable in isolated mode. Login requires agy ≥ 1.5.0; signing in from an ordinary terminal does not sign in this profile.
+
+To restore upstream behavior, explicitly set `AGY_BRIDGE_PROFILE=shared`, remove `AGY_BRIDGE_PROFILE_DIR`, and restart. Linux and Windows retain shared mode by default; isolated mode currently requires macOS.
+
+`node test/macos-profile.mjs` explicitly runs a native check with two temporary keychains and synthetic credentials. It checks HOME-based reads/writes, simulated refresh, process restarts and unchanged host keychain settings, then cleans up. It never signs in to Google or reads host credentials. Real agy OAuth, automatic token renewal, simultaneous application use, sleep/wake and long-running behavior still require acceptance with real accounts.
+
 ## Install
 
-From the Magpie community plugins: find "Antigravity (local agy CLI)" on
-Magpie's Plugins page and install it, or run:
+The local package and provider ID are both `agy-cli-isolated`. This fork has not been published to the community market or npm. Install its local entry point:
 
 ```sh
-magpie plugin add @magpie-community/opencode-agy-cli-auth
+magpie plugin add /absolute/path/to/agy-cli/opencode.mjs
 ```
 
-The provider id is `agy-cli`, so models are named `agy-cli/<model>`. The
+The provider id is `agy-cli-isolated`, so models are named `agy-cli-isolated/<model>`. The
 default concurrency is 16; change it under Concurrency on Magpie's Providers
 page (0 means no limit).
 
-After installing, sign in from Magpie; no terminal needed.
+After installing, sign in from Magpie; no terminal needed. Update existing routing and client model references from `agy-cli/<model>` to `agy-cli-isolated/<model>` and sign in under the new provider.
 
 ## Usage
 
-1. Open Magpie's Providers page, find `agy-cli`, and click Sign in. If agy is
+1. Open Magpie's Providers page, find `agy-cli-isolated`, and click Sign in. If agy in
+   the current environment (the private profile by default on macOS) is
    signed in already, that's all. If not, the plugin runs agy's own Google
    sign-in (`agy acp --login`): Magpie opens the sign-in page, and you paste the
    code the page shows (or the page's whole address) back into Magpie. This
@@ -180,7 +199,7 @@ After installing, sign in from Magpie; no terminal needed.
    change accounts, click Sign in and pick "Switch to another Google account":
    agy runs its Google sign-in even while signed in, and the new account
    replaces the old one.
-2. Refer to models as `agy-cli/<model>`. When agy lists separate model IDs
+2. Refer to models as `agy-cli-isolated/<model>`. When agy lists separate model IDs
    for different thinking levels, they are grouped here as variants of one model,
    and each request is mapped back to the matching agy ID.
 3. Pick the model in your client as usual.
@@ -207,8 +226,8 @@ After installing, sign in from Magpie; no terminal needed.
 ## Usage quota
 
 ```sh
-magpie quota agy-cli --json
-magpie quota refresh agy-cli --json
+magpie quota agy-cli-isolated --json
+magpie quota refresh agy-cli-isolated --json
 ```
 
 The numbers come from agy's own `/usage` report for whichever account is signed
@@ -228,7 +247,9 @@ usage reads wait 10 minutes before the next try, doubling up to 6 hours.
 
 | Name | Default value | What it does |
 |---|---|---|
-| `AGY_PATH` | PATH lookup | Path to the agy executable |
+| `AGY_BRIDGE_PROFILE` | macOS: `isolated`; others: `shared` | Private macOS account environment; explicit `shared` restores upstream behavior |
+| `AGY_BRIDGE_PROFILE_DIR` | See above | Absolute private profile root; restart Magpie after changing it |
+| `AGY_PATH` | Isolated: managed copy first; shared: PATH lookup | Explicit binary override takes precedence and must support ACP login |
 | `AGY_BRIDGE_MAX_PROCS` | 16 | Maximum number of agy processes in the pool |
 | `AGY_BRIDGE_THINKING` | on | Set to `0` to stop forwarding thought summaries |
 | `AGY_BRIDGE_EFFORT` | unset | Force a thinking level: `minimal`, `low`, `medium`, `high`, `xhigh` or `max` |
@@ -236,13 +257,13 @@ usage reads wait 10 minutes before the next try, doubling up to 6 hours.
 | `AGY_BRIDGE_SYSTEM_APPEND` | off | Set to `1` to append the client's system prompt to agy's own instead of putting it in the first prompt; see below |
 | `AGY_BRIDGE_IDLE_MS` | 600000 | How long a process may sit idle before it is reclaimed; the session can still resume |
 | `AGY_BRIDGE_RESUME_TTL_MS` | 21600000 | How long a reclaimed session stays resumable (6 hours) |
-| `AGY_BRIDGE_STATE_FILE` | `$XDG_STATE_HOME/magpie-agy-bridge/sessions.json` | Where resumable session records are kept |
+| `AGY_BRIDGE_STATE_FILE` | Isolated: `<profile>/state/sessions.json`; shared: `$XDG_STATE_HOME/magpie-agy-bridge/sessions.json` | Session records; fixed within the profile in isolated mode |
 | `AGY_BRIDGE_IDE_CALL_DEADLINE_MS` | 150000 | After this long, a still-running client tool gets a "still running" reply |
 | `AGY_BRIDGE_START_TIMEOUT_MS` / `_TURN_TIMEOUT_MS` / `_TOOL_TIMEOUT_MS` | 60 s / 5 min / 30 min | Limits for process startup, agy silence, and waiting on a client tool result |
 | `AGY_BRIDGE_DETACHED_EVICT_MS` | 30000 | How long a suspended tool turn whose client disconnected may keep its pool slot |
 | `AGY_BRIDGE_MAX_PROMPT_BYTES` | 114688 (112 KiB) | Byte budget for the replayed history prompt |
 | `AGY_BRIDGE_USAGE_TIMEOUT_MS` | 15000 | Total time budget for a usage query, capped at 18000 |
-| `AGY_BRIDGE_STORED_SIGNIN` | unset | `skip` stops the plugin from reading agy's stored sign-in |
+| `AGY_BRIDGE_STORED_SIGNIN` | unset | `skip` disables stored sign-in reads in shared mode only |
 | `AGY_BRIDGE_MCP_TRACE` | unset | Writes MCP channel traffic to the given file; for debugging only |
 | `AGY_CLI_DISABLE_AUTO_UPDATE` | `true` for the plugin's agy processes | agy's own variable. When you set it, agy gets your value; see "Requirements" |
 | `AGY_BRIDGE_PREFILL` | on | Set to `0` to restore the stock 400 reject for assistant prefill tails; see "Assistant prefill" |
@@ -295,8 +316,13 @@ off unless you turn it on.
 - **agy cannot be found**: click Sign in in Magpie to have it installed (Magpie
   0.1.4246 or later), set `AGY_PATH` to the executable, or make sure `agy` is
   on PATH.
-- **Sign in fails, or agy reports a login problem**: click Sign in again, or run
-  `agy` in a terminal to sign in there.
+- **Login says "Prompts are read only …"**: old builds such as 1.2.11 have no
+  ACP subcommand. Isolated mode installs and prefers a compatible managed copy.
+  If `AGY_PATH` is set, point it at agy 1.5.0 or later. Restart Magpie after
+  updating the plugin, then sign in again.
+- **Sign in fails, or agy reports a login problem**: sign in again from Magpie.
+  In isolated mode, ordinary terminal `agy` uses the host account. If the private
+  stored format is corrupt, choose "Switch to another Google account".
 - **HTTP 503**: the pool is full. Raise `AGY_BRIDGE_MAX_PROCS` and the Providers
   page Concurrency, or reduce the number of simultaneous sessions.
 - **Usage shows "Limits not available" or a version error**: that window has no
@@ -321,8 +347,8 @@ off unless you turn it on.
 ## Development
 
 ```sh
-bun test packages/agy-cli        # from the repo root
-bun scripts/check.mjs agy-cli
+bun test                       # from this fork directory
+node test/macos-profile.mjs     # macOS: temporary real keychains, synthetic credentials
 ```
 
 The tests run the full ACP and MCP path against a fake agy (an ACP stdio server

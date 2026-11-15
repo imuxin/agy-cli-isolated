@@ -1,5 +1,6 @@
 import os from "node:os"
 import { spawnAgy } from "./platform.mjs"
+import { accountProfile } from "./profile.mjs"
 
 // The Google sign-in, run by agy itself: `agy acp --login` (agy 1.5 and
 // later, "ACP terminal auth") prints Google's sign-in link, then reads the
@@ -85,7 +86,10 @@ export function startLogin(agy, { waitMs = LOGIN_WAIT_MS, startMs = LOGIN_START_
       for (const w of waiters.splice(0)) w()
       // agy before 1.5 has no --login: it prints acp's usage and exits
       if (/Usage:/.test(out) && !SIGN_IN_LINK.test(out)) {
-        settle({ error: "this agy can't sign in from magpie (it has no `agy acp --login`). Update it with `agy update`, or run `agy` in a terminal once to sign in, then try again." })
+        const recovery = accountProfile()
+          ? "Update to agy 1.5.0 or later, then sign in again in Magpie. Signing in from an ordinary terminal uses the host account."
+          : "Update it with `agy update`, or run `agy` in a terminal once to sign in, then try again."
+        settle({ error: `this agy can't sign in from magpie (it has no \`agy acp --login\`). ${recovery}` })
       }
       settle({ error: `agy exited before printing a sign-in link${lastLine(out) ? `: ${lastLine(out)}` : ""}` })
     })

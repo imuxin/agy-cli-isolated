@@ -38,7 +38,7 @@ function body({ system, first, rest = [], userId } = {}) {
   const messages = []
   if (first != null) messages.push(typeof first === "string" ? { role: "user", content: first } : first)
   messages.push(...rest)
-  const out = { model: "agy-cli/test-model", messages }
+  const out = { model: "agy-cli-isolated/test-model", messages }
   if (system != null) out.system = system
   if (userId != null) out.metadata = { user_id: userId }
   return out

@@ -60,7 +60,7 @@ function captureSpawn(platform, inherited, callback) {
   const child = {}
   try {
     Object.defineProperty(process, "platform", { ...platformDescriptor, value: platform })
-    process.env = inherited
+    process.env = { ...inherited, AGY_BRIDGE_PROFILE: "shared" }
     childProcess.spawn = (file, args, options) => {
       calls.push({ file, args, options })
       return child

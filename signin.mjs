@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
+import { accountProfile, prepareProfile, ProfileError } from "./profile.mjs"
 
 // What agy's own sign-in looks like on this computer, read without running
 // agy. agy keeps its Google token in the system keyring through go-keyring,
@@ -67,10 +68,10 @@ try {
 } finally { [MagpieAgy.Cred]::CredFree($p) }
 `
 
-function run(file, args) {
+function run(file, args, options = {}) {
   return new Promise((resolve) => {
     try {
-      execFile(file, args, { timeout: READ_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024, encoding: "utf8" },
+      execFile(file, args, { timeout: READ_TIMEOUT_MS, ...options, windowsHide: true, maxBuffer: 1024 * 1024, encoding: "utf8" },
         (error, stdout) => resolve({ code: error ? (typeof error.code === "number" ? error.code : -1) : 0, stdout: String(stdout ?? "") }))
     } catch {
       resolve({ code: -1, stdout: "" })
@@ -119,16 +120,32 @@ export function emailOf(raw) {
 
 // readStoredValue reads agy's keyring value on this computer: { raw }, or
 // { state } when there is none ("missing") or it can't be read ("unknown").
-async function readStoredValue({ platform = process.platform, exec = run, env = process.env } = {}) {
+async function readStoredValue({ platform = process.platform, exec = run, env = process.env, prepare = prepareProfile, deadline = Date.now() + READ_TIMEOUT_MS } = {}) {
+  const profile = accountProfile(env, platform)
+  let childEnv = profile ? prepare(profile, env, { deadline }) : env
   // tests, and setups this reading doesn't fit, turn it off
-  if (env.AGY_BRIDGE_STORED_SIGNIN === "skip") return { state: "unknown" }
+  if (childEnv.AGY_BRIDGE_STORED_SIGNIN === "skip") return { state: "unknown" }
   // agy signs in with these instead of a stored Google sign-in
-  if (ENV_SIGN_INS.some((name) => env[name])) return { state: "unknown" }
+  if (ENV_SIGN_INS.some((name) => childEnv[name])) return { state: "unknown" }
   if (platform === "darwin") {
-    const r = await exec("/usr/bin/security", ["find-generic-password", "-s", SERVICE, "-a", USER, "-w"])
+    const args = ["find-generic-password", "-s", SERVICE, "-a", USER, "-w"]
+    if (profile) args.push(profile.keychain)
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) throw new ProfileError("private sign-in read timed out")
+    let r = await exec("/usr/bin/security", args, { env: childEnv, timeout: Math.min(remaining, READ_TIMEOUT_MS) })
+    if (profile && r.code !== 0 && r.code !== 44 && prepare === prepareProfile) {
+      childEnv = prepare(profile, env, { deadline, fresh: true })
+      const retryRemaining = deadline - Date.now()
+      if (retryRemaining <= 0) throw new ProfileError("private sign-in read timed out")
+      r = await exec("/usr/bin/security", args, { env: childEnv, timeout: Math.min(retryRemaining, READ_TIMEOUT_MS) })
+    }
     // 44: errSecItemNotFound
     if (r.code === 44) return { state: "missing" }
-    if (r.code !== 0) return { state: "unknown" }
+    if (r.code !== 0) {
+      if (profile) throw new ProfileError("cannot read the private keychain; unlock or repair the profile")
+      return { state: "unknown" }
+    }
+    if (profile && parseStored(r.stdout).state === "unknown") throw new ProfileError("unrecognized private sign-in; sign in again in Magpie")
     return { raw: r.stdout }
   }
   if (platform === "win32") {
@@ -156,7 +173,8 @@ export async function storedEmail(opts) {
   try {
     const v = await readStoredValue(opts)
     return "raw" in v ? emailOf(v.raw) : ""
-  } catch {
+  } catch (error) {
+    if (error instanceof ProfileError) throw error
     return ""
   }
 }
@@ -190,12 +208,17 @@ let reading = null
 export async function storedSignIn({ read = readStoredSignIn, fresh = false } = {}) {
   if (!fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.value
   if (!reading) {
-    const r = Promise.resolve().then(() => read()).catch(() => ({ state: "unknown" })).then((value) => {
-      if (reading === r) {
-        cached = { at: Date.now(), value }
-        reading = null
+    const r = Promise.resolve().then(() => read()).catch((error) => {
+      if (error instanceof ProfileError) {
+        if (reading === r) cached = null
+        throw error
       }
+      return { state: "unknown" }
+    }).then((value) => {
+      if (reading === r) cached = { at: Date.now(), value }
       return value
+    }).finally(() => {
+      if (reading === r) reading = null
     })
     reading = r
   }

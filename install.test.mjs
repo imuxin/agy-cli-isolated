@@ -103,9 +103,19 @@ test("the plugin's own agy is in its own data folder, found after the user's", (
   expect(ownAgyPath({}, "/home/u", "linux")).toBe("/home/u/.local/share/magpie-agy-cli/agy")
   expect(ownAgyPath({ XDG_DATA_HOME: "relative" }, "/home/u", "linux")).toBe("/home/u/.local/share/magpie-agy-cli/agy")
   expect(ownAgyPath({ LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" }, "C:\\Users\\u", "win32")).toBe("C:\\Users\\u\\AppData\\Local\\magpie-agy-cli\\agy.exe")
-  const c = agyCandidates({ PATH: "/usr/bin", XDG_DATA_HOME: "/config/data" }, "/config/home", "linux")
+  const c = agyCandidates({ PATH: "/usr/bin", XDG_DATA_HOME: "/config/data", AGY_BRIDGE_PROFILE: "shared" }, "/config/home", "linux")
   expect(c.at(-1)).toBe("/config/data/magpie-agy-cli/agy")
   expect(c[0]).toBe("/usr/bin/agy")
+})
+
+test("isolated mode prefers the managed CLI, with AGY_PATH taking precedence", () => {
+  const env = { PATH: "/usr/bin", XDG_DATA_HOME: "/data", AGY_BRIDGE_PROFILE: "isolated" }
+  const candidates = agyCandidates(env, "/Users/test", "darwin")
+  expect(candidates[0]).toBe("/data/magpie-agy-cli/agy")
+  expect(candidates.indexOf("/usr/bin/agy")).toBeGreaterThan(0)
+  expect(candidates.filter(file => file === candidates[0])).toHaveLength(1)
+  expect(agyCandidates({ ...env, AGY_PATH: "/explicit/agy" }, "/Users/test", "darwin").slice(0, 2))
+    .toEqual(["/explicit/agy", "/data/magpie-agy-cli/agy"])
 })
 
 test("agy is taken out of its archive, past a long name and a ./ prefix", async () => {

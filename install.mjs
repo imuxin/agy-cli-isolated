@@ -1,4 +1,5 @@
-// Installs agy where the machine has none, as Antigravity's own installer
+// Installs a managed agy when none is available or isolated login needs
+// a newer CLI, as Antigravity's own installer
 // does (https://antigravity.google/cli/install.sh, install.ps1): the
 // platform's manifest names the version, the download and its sha512; a
 // Unix download is a tar.gz holding the binary as `antigravity`, a Windows
@@ -298,9 +299,9 @@ export function keepAgyCurrent(findAgy) {
   const tick = async () => {
     try {
       const was = await updateOwnAgy({ used: findAgy() })
-      if (was === "updated") console.error(`agy-cli: updated its agy to ${installedVersion()}`)
+      if (was === "updated") console.error(`agy-cli-isolated: updated its agy to ${installedVersion()}`)
     } catch (error) {
-      console.error(`agy-cli: couldn't update its agy: ${error?.message || error}`)
+      console.error(`agy-cli-isolated: couldn't update its agy: ${error?.message || error}`)
     }
     setTimeout(tick, KEEP_EVERY_MS).unref?.()
   }

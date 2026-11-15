@@ -3,7 +3,8 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { agySpawnSpec, childEnv as agyChildEnv } from "./platform.mjs"
-import { cannotSignIn, isDead, noteDead, storedSignIn } from "./signin.mjs"
+import { agyEnvironment, ProfileError } from "./profile.mjs"
+import { cannotSignIn, isDead, noteDead, readStoredSignIn, storedSignIn } from "./signin.mjs"
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const MAX_TIMEOUT_MS = 18_000 // Magpie bounds an auth.usage call to 20 seconds.
@@ -27,13 +28,13 @@ const field = (value, camel, snake) => value?.[camel] ?? value?.[snake]
 
 function commandFailure(output) {
   if (/not (?:logged|signed) in|unauthenticated|authentication required|login required|please (?:log|sign) in|sign in again/i.test(output)) {
-    return new UsageError("agy usage needs authentication. Run `agy` in a terminal to sign in again.", { kind: "auth" })
+    return new UsageError("agy usage needs authentication; sign in again in Magpie.", { kind: "auth" })
   }
   const eligibility = /eligibility check failed|not eligible|unsupported (?:country|region)|does not support google tos/i.test(output)
   const network = /\b(?:eof|timeout|timed out|deadline exceeded|no such host|connection (?:refused|reset)|network|proxy|tls|ssl|certificate)\b/i.test(output)
   if (network) return new UsageError(`agy usage ${eligibility ? "eligibility check " : ""}failed on a network request. Check network or proxy settings.`)
   if (eligibility) return new UsageError("agy reports that this account is not eligible for Antigravity.")
-  return new UsageError("agy could not read usage. Run `agy` in a terminal to check its status.")
+  return new UsageError("agy could not read usage. Check the agy account's sign-in and network settings in Magpie.")
 }
 
 function resetTime(value) {
@@ -230,9 +231,11 @@ export async function fetchUsage(agy, {
   maxOutputBytes = MAX_OUTPUT_BYTES,
   signal,
   tempRoot = os.tmpdir(),
+  deadline = Date.now() + timeout(timeoutMs),
 } = {}) {
-  if (!agy) throw new UsageError("agy CLI not found. Install it and run `agy` once to sign in.")
-  const deadline = Date.now() + timeout(timeoutMs)
+  if (!agy) throw new UsageError("agy CLI not found. Install it and sign in from Magpie.")
+  if (Date.now() >= deadline) throw new UsageError("agy usage query timed out.")
+  env = agyEnvironment(env, { deadline })
   const directory = await fs.mkdtemp(path.join(tempRoot, "magpie-agy-usage-"))
   let pendingTreeKill = null
   try {
@@ -298,7 +301,7 @@ function backoff(n) {
   return Math.min(BACKOFF_FIRST_MS * 2 ** Math.max(0, Math.min(n, 20) - 1), BACKOFF_MOST_MS)
 }
 
-const NEEDS_SIGN_IN = "Sign in again from this account's Sign in in magpie, or run `agy` in a terminal; magpie doesn't run agy for usage until then."
+const NEEDS_SIGN_IN = "Sign in again from this account's Sign in in Magpie; Magpie doesn't run agy for usage until then."
 
 // No completed-result cache: sequential refreshes must see account/allowance changes.
 // What is kept is what keeps agy from being run when it can't answer:
@@ -311,7 +314,7 @@ const NEEDS_SIGN_IN = "Sign in again from this account's Sign in in magpie, or r
 //   that stored sign-in dead: agy isn't run again until another is stored.
 // - any other failure isn't run again for backoff(n).
 export function createUsageReader(resolveAgy, options = {}) {
-  const { signIn = () => storedSignIn(), now = () => Date.now(), ...fetchOptions } = options
+  const { signIn = ({ deadline }) => storedSignIn({ read: () => readStoredSignIn({ env: options.env || process.env, deadline }) }), now = () => Date.now(), ...fetchOptions } = options
   const pending = new Map()
   let held = null
   let saidExpired = false
@@ -320,8 +323,13 @@ export function createUsageReader(resolveAgy, options = {}) {
     return { windows: [], error: `${why}. ${NEEDS_SIGN_IN}`, signIn: "expired" }
   }
   return async () => {
+    const env = fetchOptions.env || process.env
+    const deadline = Date.now() + timeout(fetchOptions.timeoutMs ?? env.AGY_BRIDGE_USAGE_TIMEOUT_MS)
     let stored
-    try { stored = await signIn() } catch { stored = { state: "unknown" } }
+    try { stored = await signIn({ deadline }) } catch (error) {
+      if (error instanceof ProfileError) return { windows: [], error: error.message, signIn: "kept" }
+      stored = { state: "unknown" }
+    }
     const why = cannotSignIn(stored)
     if (why) return expired(why)
     if (isDead(stored)) return expired("agy's sign-in no longer works")
@@ -332,7 +340,7 @@ export function createUsageReader(resolveAgy, options = {}) {
     try {
       const agy = resolveAgy()
       if (!pending.has(agy)) {
-        const query = fetchUsage(agy, fetchOptions).finally(() => {
+        const query = fetchUsage(agy, { ...fetchOptions, deadline }).finally(() => {
           if (pending.get(agy) === query) pending.delete(agy)
         })
         pending.set(agy, query)
@@ -342,7 +350,7 @@ export function createUsageReader(resolveAgy, options = {}) {
       saidExpired = false
       return result
     } catch (error) {
-      const message = error instanceof UsageError ? error.message : "agy usage query failed. Check the CLI and temporary-directory permissions."
+      const message = error instanceof UsageError || error instanceof ProfileError ? error.message : "agy usage query failed. Check the CLI and temporary-directory permissions."
       if (error?.kind === "cancel") return { windows: [], error: message, signIn: "kept" }
       const auth = error?.kind === "auth" || error?.kind === "timeout" && stored?.state === "present" && stored.expired &&
         (!String(error.output ?? "").trim() || SIGN_IN_TALK.test(error.output))

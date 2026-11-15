@@ -140,7 +140,7 @@ test("会话开放的型号才列出：不等请求，探测会话就列出 Clau
     // 探测只开会话、不发 prompt，用插件自己的名字，进程跑完就关。
     assert.equal(kit.acpLog.filter(entry => entry.method === "session/prompt").length, 0, "探测不应发 prompt")
     assert.equal(kit.acpLog.filter(entry => entry.method === "session/new").length, 1)
-    assert.equal(kit.acpLog.find(entry => entry.method === "initialize")?.params?.clientInfo?.name, "opencode-agy-cli-auth")
+    assert.equal(kit.acpLog.find(entry => entry.method === "initialize")?.params?.clientInfo?.name, "agy-cli-isolated")
     assert.deepEqual(kit.acpSpawns.map(spawn => spawn.args), [["acp"]])
     assert.equal(kit.children.size, 0, "探测的 agy acp 应已退出")
     // 已知开放什么之后不再探测。
@@ -184,7 +184,7 @@ test("会话后来开放的型号变了，目录随之更新", async () => {
       await agent.text("ok")
       return { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 1 } }
     }
-    const parsed = await readSse(await kit.request(baseBody({ model: "agy-cli/gemini-4-argon", tools: [], messages: [{ role: "user", content: "hi" }] })))
+    const parsed = await readSse(await kit.request(baseBody({ model: "agy-cli-isolated/gemini-4-argon", tools: [], messages: [{ role: "user", content: "hi" }] })))
     assert.equal(parsed.error, null, JSON.stringify(parsed.error))
     assert.ok((await kit.models())["claude-opus-5-5"])
   })
@@ -327,7 +327,7 @@ test("握手报出的 agy 版本低于 1.4.12 时拒绝会话并说明原因", a
       await agent.text("ok")
       return { stopReason: "end_turn" }
     }
-    const response = await kit.request(baseBody({ model: "agy-cli/gemini-4-argon", tools: [], messages: [{ role: "user", content: "hi" }] }))
+    const response = await kit.request(baseBody({ model: "agy-cli-isolated/gemini-4-argon", tools: [], messages: [{ role: "user", content: "hi" }] }))
     const text = response.status === 200 ? JSON.stringify((await readSse(response)).error) : await response.text()
     assert.match(text, /agy 1\.4\.11 is older than 1\.4\.12/)
     assert.equal(kit.acpLog.filter(entry => entry.method === "session/new").length, 0, "旧版本不应开会话")
@@ -475,11 +475,11 @@ test("各家族 limit 正确，未知动态型号不猜成 1M", async () => {
 
 test("gpt-oss-120b 裸名映射到 medium，请求型号尾部 [1m] 被剥除", async () => {
   const cases = [
-    ["agy-cli/gpt-oss-120b", "gpt-oss-120b-medium", "gpt-oss-120b"],
-    ["agy-cli/gpt-oss-120b[1m]", "gpt-oss-120b-medium", "gpt-oss-120b"],
-    ["agy-cli/gpt-oss-120b-medium", "gpt-oss-120b-medium", "gpt-oss-120b-medium"],
-    ["agy-cli/gemini-4-argon[1m]", "gemini-4-argon-high", "gemini-4-argon"],
-    ["agy-cli/claude-sonnet-5-5[1M]", "claude-sonnet-5-5-high", "claude-sonnet-5-5"],
+    ["agy-cli-isolated/gpt-oss-120b", "gpt-oss-120b-medium", "gpt-oss-120b"],
+    ["agy-cli-isolated/gpt-oss-120b[1m]", "gpt-oss-120b-medium", "gpt-oss-120b"],
+    ["agy-cli-isolated/gpt-oss-120b-medium", "gpt-oss-120b-medium", "gpt-oss-120b-medium"],
+    ["agy-cli-isolated/gemini-4-argon[1m]", "gemini-4-argon-high", "gemini-4-argon"],
+    ["agy-cli-isolated/claude-sonnet-5-5[1M]", "claude-sonnet-5-5-high", "claude-sonnet-5-5"],
   ]
   for (const [requested, agyModel, echoed] of cases) {
     await withKit({ agyPath: undefined, offeredModels: OFFERED_ALL }, async (kit) => {

@@ -1,6 +1,6 @@
 # NOTICE：来源与合规说明
 
-本包（`@magpie-community/opencode-agy-cli-auth`，版本 0.1.0）源自 Antigravity 桥接插件
+本地 fork `agy-cli-isolated` 基于 `@magpie-community/opencode-agy-cli-auth`。上游最初版本 0.1.0 源自 Antigravity 桥接插件
 `opencode-antigravity-bridge`，由 gitxm 整理为 `gitxm/yce-magpie-agy` 后提交到
 magpie-community/plugins（plugins#785），以 MIT 协议发布。**与上游无隶属关系。** 上游版权声明原样保留在 [LICENSE](LICENSE)，
 本仓新增部分的版权归 gitxm 与 yce。
@@ -9,11 +9,11 @@ magpie-community/plugins（plugins#785），以 MIT 协议发布。**与上游�
 
 | 项目 | 取值 |
 |---|---|
-| npm 包名 | `@magpie-community/opencode-agy-cli-auth` |
-| 版本 | `0.1.0` |
-| 仓库 | `https://github.com/magpie-community/plugins`（`packages/agy-cli`） |
-| Magpie provider ID | `agy-cli` |
-| 安装 | `magpie plugin add @magpie-community/opencode-agy-cli-auth` |
+| 包名（尚未发布到 npm） | `agy-cli-isolated` |
+| 版本 | `0.1.63` |
+| 上游仓库 | `https://github.com/magpie-community/plugins`（`packages/agy-cli`） |
+| Magpie provider ID | `agy-cli-isolated` |
+| 本地安装 | `magpie plugin add /absolute/path/to/agy-cli/opencode.mjs` |
 | 原始仓库 | `https://github.com/gitxm/yce-magpie-agy`（包名 `@magpie-community/yce-magpie-agy`、provider ID `yce-magpie-agy`，均未发布到 npm） |
 
 进程内部标识保持不变，以免影响已有的状态文件与日志：`AGY_BRIDGE_*` 环境变量、
@@ -77,7 +77,7 @@ A1–A16、U1–U6 逐项并入。两边都有、且 `acb8d84` 写法更新的�
 [LICENSE](LICENSE) 保留上游版权行 `Copyright (c) 2026 DylanLIiii`，并依次列出
 `Copyright (c) 2026 gitxm` 与 `Copyright (c) 2026 yce`。MIT 正文未作修改。
 
-## 7. 从旧版迁移
+## 7. 上游旧版迁移记录
 
 旧版是包名 `magpie-agy` 0.2.0，provider ID 为 `antigravity-bridge`。改为 0.1.0 后：
 
@@ -88,3 +88,11 @@ A1–A16、U1–U6 逐项并入。两边都有、且 `acb8d84` 写法更新的�
 3. **内部状态不变**：会话停车文件仍在 `magpie-agy-bridge/sessions.json`，已有会话可以续接。
 4. **切换顺序**：先安装新包，确认新 provider 能返回 200，再逐个改模型名；旧包最后移除。
    本仓内不执行切换操作。
+
+## 8. 本地 fork：macOS 独立账号环境与名称
+
+本地 fork 的包名、provider ID 和 ACP 客户端名统一为 `agy-cli-isolated`，与上游 `agy-cli` 区分。已有客户端和路由中的模型前缀应改成 `agy-cli-isolated/`，并在新 provider 下登录。工作目录、`AGY_BRIDGE_*` 配置名和凭据、会话存储路径保留，以免因改名丢失已有本地数据。
+
+本地改动新增 `profile.mjs`，macOS 默认通过专用 HOME、私有 Keychain、私有钥匙串偏好和 profile 内状态目录，将 Magpie 的单个账号与宿主 Antigravity 账号分离。公共启动入口、登录、凭据预检、邮箱、模型及额度查询使用同一环境。非 macOS 默认保留共享行为；显式 `AGY_BRIDGE_PROFILE=shared` 可恢复上游模式。
+
+原生钥匙串隔离思路参考 [lefos13/paseo-plugin-antigravity-cli 的 accounts.ts](https://github.com/lefos13/paseo-plugin-antigravity-cli/blob/e52afdae91e063cf53805d54d5e19030b4527c0c/server/accounts.ts)。本实现使用最小独立目录、不镜像宿主 HOME，采用随机密码与失败即停止的处理，并提供合成凭据的原生验收脚本。配置、迁移、Keychain 生命周期及验证边界见 README 的独立账号章节。

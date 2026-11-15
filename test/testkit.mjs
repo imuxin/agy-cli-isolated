@@ -444,6 +444,7 @@ export async function createBridgeKit(options = {}) {
   kit.agyPath = makeFakeAgy(tmp, "agy-a")
   kit.makeFakeAgy = (name) => makeFakeAgy(tmp, name)
   kit.env = {
+    AGY_BRIDGE_PROFILE: "shared",
     PATH: bin,
     HOME: home,
     USERPROFILE: home,
@@ -476,7 +477,7 @@ export async function createBridgeKit(options = {}) {
       kit.helpSpawns.push({ file, args })
       const child = new FakeChild(kit, file, args)
       setImmediate(() => {
-        if (options.acpHelp) child.stderr.emit("data", options.acpHelp)
+        child.stderr.emit("data", options.acpHelp ?? "Usage of acp:\n  --login\n")
         child.finish(0)
       })
       return child
@@ -552,6 +553,7 @@ export async function createBridgeKit(options = {}) {
     if (cache.has(key)) return cache.get(key)
     let module
     if (key === "./usage.mjs") module = sourceModule(USAGE_FILE, "", usageUrl)
+    else if (key === "./profile.mjs") module = sourceModule(path.join(REPO_DIR, "profile.mjs"), "", pathToFileURL(path.join(REPO_DIR, "profile.mjs")).href)
     else if (key === "./platform.mjs") module = sourceModule(PLATFORM_FILE, "", platformUrl)
     else if (key === "./array-items.mjs") module = sourceModule(ARRAY_ITEMS_FILE, "", arrayItemsUrl)
     else if (key === "./cloak.mjs") module = sourceModule(CLOAK_FILE, "", cloakUrl)
@@ -708,7 +710,7 @@ export const READ_TOOL = {
 
 export function baseBody(overrides = {}) {
   return {
-    model: "agy-cli/gemini-4-argon[1m]",
+    model: "agy-cli-isolated/gemini-4-argon[1m]",
     max_tokens: 4096,
     stream: true,
     system: "You are a test agent.",

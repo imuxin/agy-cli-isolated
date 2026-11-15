@@ -1,6 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { backgroundBlocked, cannotSignIn, emailOf, forgetStoredSignIn, isDead, noteDead, parseStored, readStoredSignIn, storedEmail, storedSignIn, storedSignInNow } from "../signin.mjs"
+import { backgroundBlocked, cannotSignIn, emailOf, forgetStoredSignIn, isDead, noteDead, parseStored, readStoredSignIn as readSharedSignIn, storedEmail as sharedEmail, storedSignIn, storedSignInNow } from "../signin.mjs"
+
+const shared = opts => ({ ...opts, env: { ...opts?.env, AGY_BRIDGE_PROFILE: "shared" } })
+const readStoredSignIn = opts => readSharedSignIn(shared(opts))
+const storedEmail = opts => sharedEmail(shared(opts))
 
 const NOW = Date.parse("2026-11-13T00:00:00Z")
 const stored = (token, extra = {}) => JSON.stringify({ token, auth_method: "consumer", id_token_email: "someone@example.com", ...extra })

@@ -1,3 +1,4 @@
+import { accountProfile, agyEnvironment, ProfileError } from "./profile.mjs"
 import { agyCandidates, spawnAgy, windowsMcpShim, windowsNcBuild, windowsTreeKill } from "./platform.mjs"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
@@ -8,7 +9,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createUsageReader } from "./usage.mjs"
-import { backgroundBlocked, cannotSignIn, forgetStoredSignIn, storedEmail, storedSignInNow } from "./signin.mjs"
+import { backgroundBlocked, cannotSignIn, forgetStoredSignIn, storedEmail, storedSignIn, storedSignInNow } from "./signin.mjs"
 import { sanitizePatternFields } from "./re2-pattern.mjs"
 import { startLogin } from "./login.mjs"
 import { AGY_MANUAL, installAgy, keepAgyCurrent } from "./install.mjs"
@@ -18,7 +19,7 @@ import { fitTools } from "./tool-budget.mjs"
 import { cloakUser, hint, outgoing, turnsAway } from "./cloak.mjs"
 import { modelUsageCursor, modelUsageAfter, sessionDbPath } from "./step-usage.mjs"
 
-const PROVIDER_ID = "agy-cli"
+const PROVIDER_ID = "agy-cli-isolated"
 // Client tools reach the session through a private `nc` placed first on agy's
 // PATH: agy dials `--ide-mcp-port` by running `nc 127.0.0.1 <port>`. That is
 // how agy works, not a documented interface, and it was checked on 1.4.12 and
@@ -45,7 +46,7 @@ const CLIENT_INFO = (() => {
     const pkg = JSON.parse(fs.readFileSync(new URL("./package.json", import.meta.url), "utf8"))
     return { name: String(pkg.name).replace(/^@[^/]+\//, ""), version: String(pkg.version) }
   } catch {
-    return { name: "opencode-agy-cli-auth", version: "0.0.0" }
+    return { name: "agy-cli-isolated", version: "0.0.0" }
   }
 })()
 const AGENT_NAME = "magpie-bridge"
@@ -198,7 +199,7 @@ function findAgy() {
   // LOCALAPPDATA, home): a cached path from an old environment may be gone.
   const home = os.homedir()
   const env = process.env
-  const searchKey = JSON.stringify([env.AGY_PATH, env.PATH, env.Path, env.LOCALAPPDATA, env.XDG_DATA_HOME, home])
+  const searchKey = JSON.stringify([env.AGY_PATH, env.PATH, env.Path, env.LOCALAPPDATA, env.XDG_DATA_HOME, env.AGY_BRIDGE_PROFILE, env.AGY_BRIDGE_PROFILE_DIR, home])
   // and whenever the path found is gone: an agy removed while magpie ran
   // is installed again by the next sign-in, not spawned where it was
   if (cachedAgyPath && cachedAgySearchKey === searchKey) {
@@ -246,6 +247,9 @@ function acpHelp(agyPath) {
     probe = execOnce(agyPath, ["acp", "--help"], { timeoutMs: 10_000 }).then(({ err, stdout, stderr, timedOut }) => {
       if (err || timedOut) acpHelpText.delete(key)
       return stdout + stderr
+    }, (err) => {
+      acpHelpText.delete(key)
+      throw err
     })
     acpHelpText.set(key, probe)
   }
@@ -260,6 +264,8 @@ export function noDefaultCustomizationsArgs(agyPath) {
 // conversation again on session/resume. AGY_BRIDGE_GEMINI_DIR names another;
 // "default" (or 0, off, …) leaves agy on its own ~/.gemini, skills and all.
 export function bridgeGeminiDir(env = process.env) {
+  const profile = accountProfile(env)
+  if (profile) return profile.gemini
   const named = env.AGY_BRIDGE_GEMINI_DIR || ""
   if (/^(?:default|0|false|off|no|disabled)$/i.test(named)) return null
   if (named) return path.resolve(named)
@@ -282,6 +288,10 @@ export function fileSignIn(home = os.homedir()) {
 }
 
 export async function geminiDirArgs(agyPath, env = process.env) {
+  const profile = accountProfile(env)
+  // HOME already selects this directory for login, models, usage and ACP alike.
+  // Do not depend on an ACP-only flag or the host's file credentials.
+  if (profile) return { args: [], dir: profile.gemini }
   const dir = bridgeGeminiDir(env)
   if (!dir || (!env.AGY_BRIDGE_GEMINI_DIR && fileSignIn())) return { args: [], dir: null }
   if (!/--gemini[-_]dir\b/.test(await acpHelp(agyPath))) return { args: [], dir: null }
@@ -294,7 +304,7 @@ export async function geminiDirArgs(agyPath, env = process.env) {
 }
 
 function execOnce(file, args, opts = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let child
     try {
       const launch = file === "taskkill" ? spawn : spawnAgy
@@ -305,6 +315,10 @@ function execOnce(file, args, opts = {}) {
         windowsHide: true,
       })
     } catch (err) {
+      if (err instanceof ProfileError) {
+        reject(err)
+        return
+      }
       resolve({ err, stdout: "", stderr: "", code: null, timedOut: false })
       return
     }
@@ -2742,6 +2756,8 @@ function digest(value) {
 // conversation on disk, and this file maps a conversation to its agy session.
 // It stores only hashes of the history and instructions, never message text.
 function sessionStateFile() {
+  const profile = accountProfile()
+  if (profile) return profile.stateFile
   if (process.env.AGY_BRIDGE_STATE_FILE) return process.env.AGY_BRIDGE_STATE_FILE
   const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state")
   return path.join(base, "magpie-agy-bridge", "sessions.json")
@@ -5890,10 +5906,24 @@ async function beginTurn(proc, history, body, callerWorkDir, model, selection, a
   return proc.startTurn(contentParts, body.messages, model, selection)
 }
 
-// A magpie that installs a plugin's CLI (auth.cli) installs agy before it
-// gets here; an older one, or OpenCode, doesn't.
-function noAgy() {
-  return { type: "failed", error: `agy CLI not found. Update magpie and sign in again to have it installed, or install Antigravity CLI yourself: ${AGY_MANUAL}` }
+async function loginReady(agy) {
+  return Boolean(agy && /--login\b/.test(await acpHelp(agy)))
+}
+
+// A binary being on PATH does not mean it supports ACP terminal login:
+// agy 1.2.11 treats `acp` as a prompt argument. Only help is probed here.
+async function ensureLoginAgy({ signal } = {}) {
+  agyEnvironment()
+  const agy = findAgy()
+  if (await loginReady(agy)) return agy
+  if (agy && (process.env.AGY_PATH || !accountProfile())) {
+    throw new Error(`agy at ${agy} has no \`agy acp --login\`. Use agy 1.5.0 or later${process.env.AGY_PATH ? " and update AGY_PATH to that binary" : "; update agy or set AGY_PATH to a newer binary"}.`)
+  }
+  await installAgy({ signal })
+  cachedAgyPath = null
+  const installed = findAgy()
+  if (!await loginReady(installed)) throw new Error("the installed agy does not provide `agy acp --login`; agy 1.5.0 or later is required")
+  return installed
 }
 
 // signedInAs is the sign-in's result, named by the Google account agy is
@@ -5930,24 +5960,21 @@ async function googleSignIn(agy) {
 }
 
 export const AntigravityBridgePlugin = async () => {
+  // Fail before exposing a provider if its credential environment cannot be isolated.
+  agyEnvironment()
   const readUsage = createUsageReader(findAgy)
   keepAgyCurrent(findAgy)
   return {
     auth: {
       provider: PROVIDER_ID,
       single: true,
-      // Magpie's hook for the CLI a plugin runs through: a sign-in on a
-      // machine without agy (magpie in Docker) installs it first, into the
-      // plugin's own folder (install.mjs). OpenCode ignores it.
+      // Require ACP terminal login, not just an executable on PATH.
+      // The managed copy lets isolated mode upgrade without changing the host CLI.
       cli: {
         name: "Antigravity CLI",
         manual: AGY_MANUAL,
-        installed: async () => findAgy() !== null,
-        install: async ({ signal } = {}) => {
-          if (findAgy()) return
-          await installAgy({ signal })
-          if (!findAgy()) throw new Error("agy was installed, but the plugin can't run it")
-        },
+        installed: async () => loginReady(findAgy()),
+        install: ensureLoginAgy,
       },
       // Magpie's usage hook; OpenCode ignores this extension. agy owns auth.
       usage: async () => readUsage(),
@@ -5962,8 +5989,7 @@ export const AntigravityBridgePlugin = async () => {
           label: "Sign in with Google",
           labels: { zh: "使用 Google 登录", "zh-TW": "使用 Google 登入", ja: "Google でサインイン" },
           authorize: async () => {
-            const agy = findAgy()
-            if (!agy) return noAgy()
+            const agy = await ensureLoginAgy()
             if ((await probeSignedIn(agy)).ok) {
               return { url: "", instructions: "", method: "auto", callback: async () => signedInAs() }
             }
@@ -5979,11 +6005,7 @@ export const AntigravityBridgePlugin = async () => {
           type: "oauth",
           label: "Switch to another Google account (agy holds one)",
           labels: { zh: "换一个 Google 账号（agy 只能登录一个）", "zh-TW": "換一個 Google 帳號（agy 只能登入一個）", ja: "別の Google アカウントに切り替える（agy は 1 つだけ）" },
-          authorize: async () => {
-            const agy = findAgy()
-            if (!agy) return noAgy()
-            return googleSignIn(agy)
-          },
+          authorize: async () => googleSignIn(await ensureLoginAgy()),
         },
       ],
       loader: async () => {
@@ -6016,12 +6038,18 @@ export const AntigravityBridgePlugin = async () => {
 
             const agy = findAgy()
             if (!agy) return jsonError(503, "agy CLI not found on this machine")
-            // nothing stored to sign agy in with: agy would only start its
-            // own Google sign-in, so the account is told to sign in again
-            // (from the last read; a request doesn't wait for a new one)
-            const notSignedIn = cannotSignIn(storedSignInNow())
+            // Isolated mode waits for the private keychain read; shared mode keeps
+            // the existing nonblocking preflight (notably for Windows).
+            let notSignedIn
+            try {
+              notSignedIn = cannotSignIn(accountProfile() ? await storedSignIn() : storedSignInNow())
+            } catch (error) {
+              if (error instanceof ProfileError) return jsonError(503, error.message)
+              throw error
+            }
             if (notSignedIn) {
-              return jsonError(401, `${notSignedIn}: sign in again in magpie, or run \`agy\` in a terminal`, undefined,
+              const recovery = accountProfile() ? "sign in again in Magpie" : "sign in again in Magpie, or run `agy` in a terminal"
+              return jsonError(401, `${notSignedIn}: ${recovery}`, undefined,
                 { headers: { "X-Magpie-Sign-In": "expired" } })
             }
             let body
@@ -6204,7 +6232,7 @@ export const AntigravityBridgePlugin = async () => {
               )
               return streamResponse(proc, turn, body, init.signal)
             } catch (error) {
-              return jsonError(error.statusCode ?? 502, error.message, error.code, { noRetry: error.noRetry })
+              return jsonError(error.statusCode ?? (error instanceof ProfileError ? 503 : 502), error.message, error.code, { noRetry: error.noRetry })
             }
           },
         }

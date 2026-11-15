@@ -17,7 +17,7 @@ function workDir(kit, name) {
 }
 
 const BUN = "C:\\Users\\Test\\magpie\\bun.exe"
-const body = (text) => baseBody({ model: "agy-cli/gemini-4-argon", tools: [], messages: [{ role: "user", content: text }] })
+const body = (text) => baseBody({ model: "agy-cli-isolated/gemini-4-argon", tools: [], messages: [{ role: "user", content: text }] })
 
 function buildsOf(kit) {
   return kit.otherSpawns.filter(({ args }) => args[0] === "build")

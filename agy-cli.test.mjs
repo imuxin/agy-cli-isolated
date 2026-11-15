@@ -8,7 +8,7 @@ const dir = path.join(import.meta.dir, "test")
 const hook = path.join(dir, "cp-hook.mjs")
 
 function run(args, timeout) {
-  const result = Bun.spawnSync({ cmd: [process.execPath, ...args], cwd: dir, env: { ...process.env, AGY_BRIDGE_STORED_SIGNIN: "skip" }, stdout: "pipe", stderr: "pipe", timeout })
+  const result = Bun.spawnSync({ cmd: [process.execPath, ...args], cwd: dir, env: { ...process.env, AGY_BRIDGE_STORED_SIGNIN: "skip", AGY_BRIDGE_PROFILE: "shared" }, stdout: "pipe", stderr: "pipe", timeout })
   const output = result.stdout.toString() + result.stderr.toString()
   if (result.exitCode !== 0) console.error(output)
   return { code: result.exitCode, output }
