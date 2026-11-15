@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { after, test } from "node:test"
+import { exposeRuntime } from "./runtime-source.mjs"
 import { baseBody, createBridgeKit, readSse } from "./testkit.mjs"
 
 // Expose private seams from an isolated copy, without adding production exports.
@@ -15,7 +16,7 @@ process.env.AGY_BRIDGE_STATE_FILE = path.join(workspace, "sessions.json")
 process.env.HOME = workspace
 fs.writeFileSync(
   path.join(workspace, "bridge.mjs"),
-  source + "\nexport { conversationKey, stripVolatileOpening, stripVolatileSystem, isContinuedOpening, openingTextOf, sameInstructions, historyKey, takeParked, park, parked, instructionsIdentity, digest, Turn };\n",
+  exposeRuntime(source, "conversationKey, stripVolatileOpening, stripVolatileSystem, isContinuedOpening, openingTextOf, sameInstructions, historyKey, takeParked, park, parked, instructionsIdentity, digest, Turn"),
 )
 const {
   conversationKey,

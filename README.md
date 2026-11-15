@@ -116,7 +116,7 @@ magpie plugin add /absolute/path/to/agy-cli/opencode.mjs
 
 本地 fork 的 provider 是 `agy-cli-isolated`，与上游的 `agy-cli` 分开显示。
 
-重启 Magpie，在 `agy-cli-isolated` 的 Sign in 中登录账号 A。Antigravity 应用保持账号 B。第一次使用需要重新登录；插件不会复制本机凭据。已有 Magpie 登录记录只是本地标识，不能代替独立环境中的 Google 登录。请先结束旧会话；此前的会话和模型缓存不会迁入新环境。
+重启 Magpie，在 `agy-cli-isolated` 的 Sign in 中选择「使用 Google 登录」添加账号。macOS 隔离模式支持并列保存多个账号，每个账号有自己的 Keychain、会话和模型缓存；请求和额度查询使用 Magpie 选中的账号，Antigravity 应用与普通终端的账号不受影响。插件不会复制本机凭据。
 
 默认 profile 是 `$XDG_STATE_HOME/magpie-agy-bridge/profile`，未设置 XDG 时为 `~/.local/state/magpie-agy-bridge/profile`：
 
@@ -128,7 +128,9 @@ magpie plugin add /absolute/path/to/agy-cli/opencode.mjs
 | `keychain-password` | 自动解锁所需的随机密码，仅当前用户可读（0600） |
 | `state/` | 会话恢复索引和模型目录缓存 |
 
-登录、模型查询、ACP 探测、正式会话、邮箱与额度读取使用同一环境。插件不修改自身的 HOME，也不链接本机 `.gemini`、Library 或其他设置。子进程的 XDG 目录也归属 profile；API key、ADC 与 Vertex 认证变量会从子进程环境中移除，避免覆盖所选 Google 账号。二进制查找和代理等网络配置仍沿用宿主环境。
+新增账号存放在 `<默认 profile>/accounts/<账户 ID>/`，每个目录都有上述完整结构。Magpie 只保存 `agy:<账户 ID>` 这个本地标识和邮箱，Google 令牌仍由 agy 保管。升级前保存的 `agy` 凭据继续使用原来的默认 profile，无需迁移；「使用原有默认账号」可重新关联它。重新进行 Google 登录会创建新的 profile；移除 Magpie 中的账户记录不会自动删除磁盘上的 profile。
+
+同一账号的登录、模型查询、ACP 探测、正式会话、邮箱与额度读取使用同一环境。插件不修改自身的 HOME，也不链接本机 `.gemini`、Library 或其他设置。子进程的 XDG 目录也归属 profile；API key、ADC 与 Vertex 认证变量会从子进程环境中移除，避免覆盖所选 Google 账号。二进制查找和代理等网络配置仍沿用宿主环境。
 
 Keychain 使用随机非空密码；插件在启动子进程前设置、解锁并核对专用默认钥匙串与搜索列表。为允许长时间运行的 ACP 自动刷新令牌，私有 Keychain 不设空闲或睡眠自动锁定；进程退出时不会主动锁定，以免打断其他使用同一 profile 的进程。它会保持解锁，直到系统会话结束或你手动锁定；下次启动插件进程时会重新解锁。整个 profile 含可用凭据，应作为一个整体保管和备份。初始化、配置冲突或凭据读取失败会停止相关登录、请求或额度操作，不会回退到本机账号；模型目录刷新失败时停止刷新，保留原有目录或静态模型列表。
 
@@ -136,7 +138,7 @@ Keychain 使用随机非空密码；插件在启动子进程前设置、解锁�
 
 显式设置 `AGY_BRIDGE_PROFILE=shared` 并移除 `AGY_BRIDGE_PROFILE_DIR` 可以恢复上游共享账号行为，重启后生效。Linux、Windows 默认维持共享模式；此版本的独立 Keychain 只支持 macOS。内嵌登录需要 agy ≥ 1.5.0；在普通终端登录 `agy` 不会登录这个独立 profile。
 
-验证范围：自动测试使用模拟 agy；`node test/macos-profile.mjs` 会创建两个临时真实 Keychain，以合成凭据验证 HOME 读写隔离、模拟刷新、进程重启和宿主配置不变，结束后清理。它不会登录 Google 或读取宿主凭据。真实 agy 的 OAuth、令牌自动刷新、双客户端并行、睡眠唤醒和长时间运行仍需用实际账号验收。
+验证范围：`bun test` 使用模拟 agy 验证双账号并行登录、模型和额度隔离、相同对话的工具调用、会话恢复、失败账号与旧账号兼容；`node test/macos-profile.mjs` 会创建两个临时真实 Keychain，以合成凭据验证 HOME 读写隔离、模拟刷新、进程重启和宿主配置不变，结束后清理。它不会登录 Google 或读取宿主凭据。真实 agy 的 OAuth、令牌自动刷新、双客户端并行、睡眠唤醒和长时间运行仍需用实际账号验收。
 
 ## 安装
 
@@ -152,21 +154,22 @@ magpie plugin add /absolute/path/to/agy-cli/opencode.mjs
 
 ## 使用
 
-1. 在 Magpie 的 Providers 页找到 `agy-cli-isolated` 并点击 Sign in。当前运行环境中的 agy 已经登录时直接完成（macOS 默认是上述独立 profile）；
-   没登录时插件运行 agy 自己的 Google 登录（`agy acp --login`），Magpie 打开登录页，
+1. 在 Magpie 的 Providers 页找到 `agy-cli-isolated` 并点击 Sign in。macOS 隔离模式下选择「使用 Google 登录」新增账号；需要复用升级前的账号时选择「使用原有默认账号」。
+   新增账号时插件运行 agy 自己的 Google 登录（`agy acp --login`），Magpie 打开登录页，
    登录后把页面显示的授权码（或整个页面地址）粘贴回 Magpie。Magpie 在服务器或 Docker
    里也一样。登录的有效期是 15 分钟。Google 凭据始终由 agy 自己保管（系统钥匙串），
    插件不保存；agy 列出账号的模型（`agy models`）后才算登录成功。账号在 Magpie 里以 agy
    存的 Google 邮箱命名（只从钥匙串里读这一项）。
-   agy 只能登录一个 Google 账号，所以不能并列添加第二个。要换账号，点 Sign in 后选
-   「换一个 Google 账号」：agy 即使已经登录也会重新走 Google 登录，新账号替换旧账号。
+   隔离模式下可重复添加多个账号，在 Magpie 中选择使用的账号，已有请求保持使用原账号。
+   共享模式（包括 Linux、Windows 默认模式）仍只有一个 agy 账号：已登录时第一种方式直接复用，
+   「换一个 Google 账号」会重新登录并替换共享账号。
 2. 模型名写成 `agy-cli-isolated/<模型>`。agy 对同一模型不同思考等级给出的多个模型 ID，
    在这里会合并成一个模型的多个变体，请求时再映射回对应的 agy ID。
 3. 在客户端里选用这个模型即可。
 
 ## 并发
 
-- 插件自己的进程池上限由 `AGY_BRIDGE_MAX_PROCS` 决定，默认 16 个 agy 进程。
+- 每个账号的进程池上限由 `AGY_BRIDGE_MAX_PROCS` 决定，默认每个账号 16 个 agy 进程。
 - Magpie 的 Providers 页有单独的 Concurrency 设置，可填 0–1000，0 表示不限制。
   你在页面里改的值会覆盖 `package.json` 里 `magpie.maxConcurrency` 的默认声明（16）。
 - 进程池已满、又找不到可以淘汰的进程时，插件返回 HTTP 503。建议两处数值保持一致：

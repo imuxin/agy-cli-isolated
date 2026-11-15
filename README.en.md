@@ -155,11 +155,13 @@ turn); the models a client gets remain agy's decision.
 
 ## Separate Magpie and Antigravity accounts on macOS
 
-This fork defaults to one private account environment on macOS. Sign in to account A in Magpie while the Antigravity application and ordinary terminal `agy` keep account B. Install this local fork with `magpie plugin add /absolute/path/to/agy-cli/opencode.mjs`; the community npm package does not include these changes. The fork uses provider ID `agy-cli-isolated`, distinct from upstream `agy-cli`. Restart Magpie and sign in again. Existing credentials, sessions and model caches are not copied into the private environment.
+This fork supports multiple private accounts on macOS. Each account added through Sign in with Google gets its own keychain, sessions and model catalog. Requests and usage queries follow the account selected in Magpie, while the Antigravity application and ordinary terminal `agy` keep their own account. Install this local fork with `magpie plugin add /absolute/path/to/agy-cli/opencode.mjs`; the community npm package does not include these changes. The fork uses provider ID `agy-cli-isolated`, distinct from upstream `agy-cli`. Host credentials are never copied.
 
 The default root is `$XDG_STATE_HOME/magpie-agy-bridge/profile`, or `~/.local/state/magpie-agy-bridge/profile`. It contains `home/.gemini`, a private `home/Library/Keychains/account.keychain-db`, private `home/Library/Preferences/com.apple.security.plist`, a `keychain-password` file (random, nonempty password, mode 0600), and `state/` for session and model indexes. Back up and protect the whole directory as credentials.
 
-Login, model discovery, ACP probes, sessions, stored email and usage share this environment. Only child processes receive the private HOME/XDG directories. The host home is never mirrored. API key, ADC and Vertex authentication variables are removed from child environments so they cannot override the profile's Google account. Binary discovery and network/proxy settings still use the host environment.
+New accounts live under `<default root>/accounts/<account ID>/`, each with the complete structure above. Magpie saves only the local identifier `agy:<account ID>` and the email; agy owns the Google tokens. Existing `agy` credentials still use the original default profile without migration; Use the existing default profile can reconnect it. Signing in with Google again creates a new profile. Removing an account from Magpie does not automatically delete its profile on disk.
+
+Login, model discovery, ACP probes, sessions, stored email and usage share the selected account's environment. Only child processes receive the private HOME/XDG directories. The host home is never mirrored. API key, ADC and Vertex authentication variables are removed from child environments so they cannot override the profile's Google account. Binary discovery and network/proxy settings still use the host environment.
 
 Before starting agy, the plugin sets, unlocks and verifies the private default keychain and search list. Idle and sleep auto-lock are disabled to let long-lived ACP processes renew tokens; processes do not lock the keychain on exit because other processes may still use it. It stays unlocked until the OS session ends or it is manually locked, and is unlocked again before the next child starts. Initialization, conflicting configuration and credential-read failures stop login, requests or usage reads instead of using host credentials. Failed model discovery keeps the previous catalog or static model list without refreshing it.
 
@@ -167,7 +169,7 @@ Set `AGY_BRIDGE_PROFILE_DIR` to an absolute path in the **Magpie process environ
 
 To restore upstream behavior, explicitly set `AGY_BRIDGE_PROFILE=shared`, remove `AGY_BRIDGE_PROFILE_DIR`, and restart. Linux and Windows retain shared mode by default; isolated mode currently requires macOS.
 
-`node test/macos-profile.mjs` explicitly runs a native check with two temporary keychains and synthetic credentials. It checks HOME-based reads/writes, simulated refresh, process restarts and unchanged host keychain settings, then cleans up. It never signs in to Google or reads host credentials. Real agy OAuth, automatic token renewal, simultaneous application use, sleep/wake and long-running behavior still require acceptance with real accounts.
+`bun test` uses a simulated agy to verify simultaneous account logins, separate models and usage, identical conversations with independent tool calls, session recovery, failed logins and legacy credentials. `node test/macos-profile.mjs` explicitly runs a native check with two temporary keychains and synthetic credentials. It checks HOME-based reads/writes, simulated refresh, process restarts and unchanged host keychain settings, then cleans up. It never signs in to Google or reads host credentials. Real agy OAuth, automatic token renewal, simultaneous application use, sleep/wake and long-running behavior still require acceptance with real accounts.
 
 ## Install
 
@@ -185,20 +187,22 @@ After installing, sign in from Magpie; no terminal needed. Update existing routi
 
 ## Usage
 
-1. Open Magpie's Providers page, find `agy-cli-isolated`, and click Sign in. If agy in
-   the current environment (the private profile by default on macOS) is
-   signed in already, that's all. If not, the plugin runs agy's own Google
-   sign-in (`agy acp --login`): Magpie opens the sign-in page, and you paste the
+1. Open Magpie's Providers page, find `agy-cli-isolated`, and click Sign in.
+   In macOS isolated mode, Sign in with Google adds a new account; Use the
+   existing default profile reconnects the account from before this upgrade.
+   Adding an account runs agy's own Google sign-in (`agy acp --login`):
+   Magpie opens the sign-in page, and you paste the
    code the page shows (or the page's whole address) back into Magpie. This
    works with Magpie on a server or in Docker too. The sign-in waits 15
    minutes. Google credentials stay with agy (in the system keyring); the
    plugin never stores them, and counts the sign-in as done only once
    `agy models` lists the account's models. Magpie names the account by the
    Google email agy stored (the one thing read from the keyring for it).
-   agy holds one Google account, so a second one can't be added beside it. To
-   change accounts, click Sign in and pick "Switch to another Google account":
-   agy runs its Google sign-in even while signed in, and the new account
-   replaces the old one.
+   In isolated mode, repeat this to add more accounts and select them in
+   Magpie. Requests already running keep their original account. Shared mode
+   (the default on Linux and Windows) still uses one agy account: the first
+   method reuses an existing sign-in, while Switch to another Google account
+   replaces it.
 2. Refer to models as `agy-cli-isolated/<model>`. When agy lists separate model IDs
    for different thinking levels, they are grouped here as variants of one model,
    and each request is mapped back to the matching agy ID.
@@ -206,8 +210,8 @@ After installing, sign in from Magpie; no terminal needed. Update existing routi
 
 ## Concurrency
 
-- The plugin's own pool is capped by `AGY_BRIDGE_MAX_PROCS`, which defaults to 16
-  agy processes.
+- Each account's process pool is capped by `AGY_BRIDGE_MAX_PROCS`, which defaults
+  to 16 agy processes per account.
 - Magpie's Providers page has its own Concurrency field that accepts 0 to 1000,
   where 0 means no limit. A value set there overrides the default of 16 that the
   plugin declares in `magpie.maxConcurrency`.

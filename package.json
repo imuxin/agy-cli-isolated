@@ -13,6 +13,7 @@
     "opencode2.mjs",
     "platform.mjs",
     "profile.mjs",
+    "accounts.mjs",
     "install.mjs",
     "login.mjs",
     "mcp-server.mjs",

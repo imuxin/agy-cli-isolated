@@ -1,5 +1,6 @@
-import { accountProfile, agyEnvironment, ProfileError } from "./profile.mjs"
-import { agyCandidates, spawnAgy, windowsMcpShim, windowsNcBuild, windowsTreeKill } from "./platform.mjs"
+import { accountProfile as resolveProfile, agyEnvironment as prepareEnvironment, ProfileError } from "./profile.mjs"
+import { agyCandidates, spawnAgy as spawnAgyProcess, windowsMcpShim, windowsNcBuild, windowsTreeKill } from "./platform.mjs"
+import { createAccountPlugin } from "./accounts.mjs"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import { once } from "node:events"
@@ -9,8 +10,8 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createUsageReader } from "./usage.mjs"
-import { storeCatalogRows } from "./model-ids.mjs"
-import { backgroundBlocked, cannotSignIn, forgetStoredSignIn, storedEmail, storedSignIn, storedSignInNow } from "./signin.mjs"
+import { createModelIndex } from "./model-ids.mjs"
+import { cannotSignIn, createSignInReader, storedEmail } from "./signin.mjs"
 import { sanitizePatternFields } from "./re2-pattern.mjs"
 import { startLogin } from "./login.mjs"
 import { AGY_MANUAL, installAgy, keepAgyCurrent } from "./install.mjs"
@@ -170,6 +171,25 @@ const FALLBACK_MODELS = [
   { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)", effort: "low" },
 ]
 
+function positiveTimeout(value, fallback) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const runtimeReapers = new Set()
+process.once("exit", () => { for (const reap of runtimeReapers) reap() })
+
+// Each account owns its processes, sessions and catalogs. The host environment
+// stays untouched; only agy children and credential reads receive getEnv().
+export function createBridgeRuntime(getEnv = () => process.env) {
+const accountProfile = (env = getEnv()) => resolveProfile(env)
+const agyEnvironment = () => prepareEnvironment(getEnv())
+const spawnAgy = (file, args, options = {}) => spawnAgyProcess(file, args, {
+  ...options, env: { ...getEnv(), ...options.env },
+})
+const signIn = createSignInReader(getEnv)
+const { backgroundBlocked, forgetStoredSignIn, storedSignIn, storedSignInNow } = signIn
+const { storeCatalogRows, modelsInGroup } = createModelIndex()
 const pool = new Map()
 const parked = new Map()
 const allProcs = new Set()
@@ -184,14 +204,10 @@ let shimDir
 let shimDirOwned = false
 let shimDirPromise
 
-function positiveTimeout(value, fallback) {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
 function configuredTimeout(name, fallback) {
-  return Object.hasOwn(process.env, name)
-    ? positiveTimeout(process.env[name], fallback)
+  const env = getEnv()
+  return Object.hasOwn(env, name)
+    ? positiveTimeout(env[name], fallback)
     : fallback
 }
 
@@ -199,7 +215,7 @@ function findAgy() {
   // Re-search whenever an input of the search changes (AGY_PATH, PATH/Path,
   // LOCALAPPDATA, home): a cached path from an old environment may be gone.
   const home = os.homedir()
-  const env = process.env
+  const env = getEnv()
   const searchKey = JSON.stringify([env.AGY_PATH, env.PATH, env.Path, env.LOCALAPPDATA, env.XDG_DATA_HOME, env.AGY_BRIDGE_PROFILE, env.AGY_BRIDGE_PROFILE_DIR, home])
   // and whenever the path found is gone: an agy removed while magpie ran
   // is installed again by the next sign-in, not spawned where it was
@@ -257,14 +273,14 @@ function acpHelp(agyPath) {
   return probe
 }
 
-export function noDefaultCustomizationsArgs(agyPath) {
+function noDefaultCustomizationsArgs(agyPath) {
   return acpHelp(agyPath).then((help) => (/--include-default-customizations\b/.test(help) ? ["--include-default-customizations=false"] : []))
 }
 
 // The bridge's own agy folder, kept across restarts so agy finds a
 // conversation again on session/resume. AGY_BRIDGE_GEMINI_DIR names another;
 // "default" (or 0, off, …) leaves agy on its own ~/.gemini, skills and all.
-export function bridgeGeminiDir(env = process.env) {
+function bridgeGeminiDir(env = getEnv()) {
   const profile = accountProfile(env)
   if (profile) return profile.gemini
   const named = env.AGY_BRIDGE_GEMINI_DIR || ""
@@ -280,7 +296,7 @@ export function bridgeGeminiDir(env = process.env) {
 // agy keeps its Google sign-in in a file under its folder instead, and a
 // folder of the bridge's own would have no sign-in (plugins#1165): then agy
 // stays on its own, unless AGY_BRIDGE_GEMINI_DIR names one.
-export function fileSignIn(home = os.homedir()) {
+function fileSignIn(home = os.homedir()) {
   try {
     return fs.statSync(path.join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")).isFile()
   } catch {
@@ -288,7 +304,7 @@ export function fileSignIn(home = os.homedir()) {
   }
 }
 
-export async function geminiDirArgs(agyPath, env = process.env) {
+async function geminiDirArgs(agyPath, env = getEnv()) {
   const profile = accountProfile(env)
   // HOME already selects this directory for login, models, usage and ACP alike.
   // Do not depend on an ACP-only flag or the host's file credentials.
@@ -966,7 +982,7 @@ class UnsupportedContent extends Error {
 // its words after, and this one's words quote Antigravity's "code 429", so
 // without it the client got a 429 and retried a request that can't pass
 // every minute (plugins#1151).
-export function streamErrorOf(error) {
+function streamErrorOf(error) {
   const type = error?.kind || "api_error"
   const out = { type, message: String(error?.message ?? error) }
   if (type === "invalid_request_error") out.status = 400
@@ -1124,7 +1140,7 @@ async function sweepWindowsNcDirs(tmp, keep, runtimeKey = "") {
 // permission rules and `mcp_ide-tools_<name>` as a function. Only agy's own
 // words are read (title, name), never rawInput, which the model writes.
 const IDE_TOOL_NAMED = /^(?:mcp\(ide-tools\/([^()\s]+)\)|(?:mcp\s+)?"?ide-tools\/([^()\s"]+)"?|mcp_ide-tools_(\S+))$/
-export function ideToolOf(toolCall) {
+function ideToolOf(toolCall) {
   for (const value of [toolCall?.title, toolCall?.name, toolCall?.toolName]) {
     if (typeof value !== "string") continue
     // The whole title, never a word in it: a shell command's own text can
@@ -1771,12 +1787,12 @@ class Proc {
     const own = await geminiDirArgs(this.agyPath)
     args.push(...own.args)
     // agy writes the conversation's steps under the folder it was given
-    this.conversationsDir = own.dir && !process.env.AGY_BRIDGE_CONVERSATIONS_DIR
+    this.conversationsDir = own.dir && !getEnv().AGY_BRIDGE_CONVERSATIONS_DIR
       ? path.join(own.dir, "antigravity-cli", "conversations")
       : null
     try {
-      const childEnv = { ...process.env }
-      const inheritedPath = process.env.PATH || childEnv.Path || ""
+      const childEnv = { ...getEnv() }
+      const inheritedPath = childEnv.PATH || childEnv.Path || ""
       for (const key of Object.keys(childEnv)) {
         if (/^path$/i.test(key) && key !== "PATH") delete childEnv[key]
       }
@@ -2176,7 +2192,7 @@ class Proc {
       const stepUsageEnabled = this.stepUsageTrusted &&
         !/^(?:0|false|off|no|disabled)$/i.test(process.env.AGY_BRIDGE_STEP_USAGE || "")
       turn.stepsFile = stepUsageEnabled
-        ? sessionDbPath(this.sessionId, this.conversationsDir ? { AGY_BRIDGE_CONVERSATIONS_DIR: this.conversationsDir } : process.env)
+        ? sessionDbPath(this.sessionId, this.conversationsDir ? { AGY_BRIDGE_CONVERSATIONS_DIR: this.conversationsDir } : getEnv())
         : null
       turn.stepCursor = turn.stepsFile ? modelUsageCursor(turn.stepsFile) : null
       if (turn.stepsFile && turn.stepCursor === null) this.stepUsageTrusted = false
@@ -2625,7 +2641,7 @@ function resultText(result) {
   return (result?.content || []).map((part) => part?.type === "text" ? part.text : "[image returned by tool]").join("\n\n")
 }
 
-export const IMAGE_FOLLOWS = "[The image this tool returned is attached to the next message.]"
+const IMAGE_FOLLOWS = "[The image this tool returned is attached to the next message.]"
 
 function resultHasImage(result) {
   return (result?.content || []).some((part) => part?.type === "image")
@@ -2765,8 +2781,9 @@ function digest(value) {
 function sessionStateFile() {
   const profile = accountProfile()
   if (profile) return profile.stateFile
-  if (process.env.AGY_BRIDGE_STATE_FILE) return process.env.AGY_BRIDGE_STATE_FILE
-  const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state")
+  const env = getEnv()
+  if (env.AGY_BRIDGE_STATE_FILE) return env.AGY_BRIDGE_STATE_FILE
+  const base = env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state")
   return path.join(base, "magpie-agy-bridge", "sessions.json")
 }
 
@@ -5923,8 +5940,9 @@ async function ensureLoginAgy({ signal } = {}) {
   agyEnvironment()
   const agy = findAgy()
   if (await loginReady(agy)) return agy
-  if (agy && (process.env.AGY_PATH || !accountProfile())) {
-    throw new Error(`agy at ${agy} has no \`agy acp --login\`. Use agy 1.5.0 or later${process.env.AGY_PATH ? " and update AGY_PATH to that binary" : "; update agy or set AGY_PATH to a newer binary"}.`)
+  const env = getEnv()
+  if (agy && (env.AGY_PATH || !accountProfile())) {
+    throw new Error(`agy at ${agy} has no \`agy acp --login\`. Use agy 1.5.0 or later${env.AGY_PATH ? " and update AGY_PATH to that binary" : "; update agy or set AGY_PATH to a newer binary"}.`)
   }
   await installAgy({ signal })
   cachedAgyPath = null
@@ -5937,14 +5955,14 @@ async function ensureLoginAgy({ signal } = {}) {
 // signed in to when its keyring says (magpie shows the account by it,
 // not as "API key").
 async function signedInAs() {
-  const email = await storedEmail()
+  const email = await storedEmail({ env: getEnv() })
   return { type: "success", key: "agy", ...(email ? { metadata: { email } } : {}) }
 }
 
 // googleSignIn runs agy's own Google sign-in: its link, then the code the
 // page shows.
 async function googleSignIn(agy) {
-  const login = await startLogin(agy)
+  const login = await startLogin(agy, { env: getEnv() })
   if (login.error) return { type: "failed", error: login.error }
   return {
     url: login.url,
@@ -5955,7 +5973,7 @@ async function googleSignIn(agy) {
       if (done.error) return { type: "failed", error: done.error }
       // agy stored a new sign-in: read it again, and let what
       // failed with the old one run again
-      forgetStoredSignIn({ dead: true })
+      forgetStoredSignIn()
       // A new account: what agy offered the last one, or refused
       // before the sign-in, is asked again.
       forgetOffered()
@@ -5966,10 +5984,13 @@ async function googleSignIn(agy) {
   }
 }
 
-export const AntigravityBridgePlugin = async () => {
+const createPlugin = async () => {
   // Fail before exposing a provider if its credential environment cannot be isolated.
   agyEnvironment()
-  const readUsage = createUsageReader(findAgy)
+  const readUsage = createUsageReader(findAgy, {
+    env: getEnv(), resolveModels: modelsInGroup,
+    signIn: ({ deadline }) => storedSignIn({ read: () => signIn.read({ deadline }) }),
+  })
   keepAgyCurrent(findAgy)
   return {
     auth: {
@@ -6331,8 +6352,15 @@ function reapOnExit() {
   }
 }
 
-process.once("exit", reapOnExit)
+runtimeReapers.add(reapOnExit)
 
-export { sanitizeInputSchema }
+return { createPlugin, noDefaultCustomizationsArgs, bridgeGeminiDir, fileSignIn,
+  geminiDirArgs, streamErrorOf, ideToolOf, IMAGE_FOLLOWS, sanitizeInputSchema }
+}
+
+const defaultRuntime = createBridgeRuntime()
+export const { noDefaultCustomizationsArgs, bridgeGeminiDir, fileSignIn,
+  geminiDirArgs, streamErrorOf, ideToolOf, IMAGE_FOLLOWS, sanitizeInputSchema } = defaultRuntime
+export const AntigravityBridgePlugin = async () => createAccountPlugin(createBridgeRuntime, defaultRuntime)
 export default { id: PROVIDER_ID, server: AntigravityBridgePlugin }
 

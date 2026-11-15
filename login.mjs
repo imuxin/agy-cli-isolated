@@ -19,7 +19,7 @@ export const LOGIN_FINISH_MS = 60_000
 
 const SIGN_IN_LINK = /https:\/\/accounts\.google\.com\/[^\s"'<>]+/
 
-let pending = null
+const pending = new Map()
 
 // lastLine is the last thing agy said, for an error.
 function lastLine(text) {
@@ -33,21 +33,23 @@ function stop(child) {
 }
 
 // startLogin starts agy's sign-in and resolves with its link, or with why
-// it couldn't start. A second sign-in ends the first's agy.
-export function startLogin(agy, { waitMs = LOGIN_WAIT_MS, startMs = LOGIN_START_MS } = {}) {
-  if (pending) {
-    stop(pending)
-    pending = null
+// it couldn't start. A second sign-in in the same profile ends the first.
+export function startLogin(agy, { env = process.env, waitMs = LOGIN_WAIT_MS, startMs = LOGIN_START_MS } = {}) {
+  const profile = accountProfile(env)
+  const key = profile?.root || "shared"
+  if (pending.has(key)) {
+    stop(pending.get(key))
+    pending.delete(key)
   }
   return new Promise((resolve) => {
     let child
     try {
-      child = spawnAgy(agy, ["acp", "--login"], { cwd: os.tmpdir(), stdio: ["pipe", "pipe", "pipe"] })
+      child = spawnAgy(agy, ["acp", "--login"], { env, cwd: os.tmpdir(), stdio: ["pipe", "pipe", "pipe"] })
     } catch (err) {
       resolve({ error: `couldn't run agy: ${err.message}` })
       return
     }
-    pending = child
+    pending.set(key, child)
     let out = ""
     let settled = false
     let exited = null
@@ -81,12 +83,12 @@ export function startLogin(agy, { waitMs = LOGIN_WAIT_MS, startMs = LOGIN_START_
     })
     child.on("close", (code) => {
       clearTimeout(waitTimer)
-      if (pending === child) pending = null
+      if (pending.get(key) === child) pending.delete(key)
       exited = exited ?? { code }
       for (const w of waiters.splice(0)) w()
       // agy before 1.5 has no --login: it prints acp's usage and exits
       if (/Usage:/.test(out) && !SIGN_IN_LINK.test(out)) {
-        const recovery = accountProfile()
+        const recovery = profile
           ? "Update to agy 1.5.0 or later, then sign in again in Magpie. Signing in from an ordinary terminal uses the host account."
           : "Update it with `agy update`, or run `agy` in a terminal once to sign in, then try again."
         settle({ error: `this agy can't sign in from magpie (it has no \`agy acp --login\`). ${recovery}` })

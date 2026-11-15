@@ -48,7 +48,8 @@ export const CATALOG_TTL_MS = 5 * 60 * 1000
 const RUNTIME_SPECIFIER = "agy-testkit:runtime"
 const RUNTIME_NAMES = ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "process"]
 const RUNTIME_PRELUDE = `import { ${RUNTIME_NAMES.join(", ")} } from ${JSON.stringify(RUNTIME_SPECIFIER)};\n`
-const TEST_EXPORTS = "\nexport { Turn as __agyTestTurn, allProcs as __agyTestAllProcs, pool as __agyTestPool, " +
+const TEST_EXPORTS = "\nconst { Turn, allProcs, pool, execOnce, findAgy, canonicalBody, conversationKey, " +
+  "renderInitialPromptParts, reapOnExit } = defaultRuntime;\nexport { Turn as __agyTestTurn, allProcs as __agyTestAllProcs, pool as __agyTestPool, " +
   "execOnce as __agyTestExecOnce, findAgy as __agyTestFindAgy, canonicalBody as __agyTestCanonicalBody, " +
   "conversationKey as __agyTestConversationKey, renderInitialPromptParts as __agyTestRenderInitialPromptParts, reapOnExit as __agyTestReapOnExit };\n"
 const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/
@@ -133,6 +134,7 @@ function createTimers() {
 
 class FakeStream extends EventEmitter {
   setEncoding() { return this }
+  destroy() { this.removeAllListeners(); return this }
 }
 
 class FakeChild extends EventEmitter {
@@ -174,10 +176,10 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function spawnModels(kit, file, args) {
-  kit.modelsSpawns.push({ file, at: kit.clock.now() })
+function spawnModels(kit, file, args, opts) {
+  kit.modelsSpawns.push({ file, env: opts.env, at: kit.clock.now() })
   const raw = typeof kit.modelsBehavior === "function"
-    ? kit.modelsBehavior({ file, count: kit.modelsSpawns.length })
+    ? kit.modelsBehavior({ file, env: opts.env, count: kit.modelsSpawns.length })
     : kit.modelsBehavior
   const behavior = raw || { hang: true }
   if (behavior.throwSync) throw Object.assign(new Error("spawn EACCES (test)"), { code: "EACCES" })
@@ -309,7 +311,8 @@ class FakeAgy {
 
   control(message) {
     const socket = new FakeSocket()
-    this.kit.controlHandler(socket)
+    const handler = this.kit.controlHandlers.get(Number(this.env.AGY_BRIDGE_CONTROL_PORT))
+    handler(socket)
     socket.emit("data", JSON.stringify({ token: this.token, ...message }) + "\n")
     return socket.reply
   }
@@ -320,6 +323,7 @@ class FakeAgy {
       index,
       prompt: params.prompt,
       sessionId: this.sessionId,
+      env: this.env,
       get cancelPending() { return self.cancelPending },
       update(u) { self.update(u) },
       async text(text) { self.update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } }); await tick() },
@@ -438,6 +442,9 @@ export async function createBridgeKit(options = {}) {
     setModels: [],
     acpLog: [],
     controlHandler: null,
+    controlHandlers: new Map(),
+    signIns: new Map(),
+    loginSpawns: [],
     turns: [],
     env: null,
     module: null,
@@ -472,7 +479,33 @@ export async function createBridgeKit(options = {}) {
     },
   })
   const spawn = (file, args = [], opts = {}) => {
-    if (args[0] === "models") return spawnModels(kit, file, args)
+    if (args[0] === "models") return spawnModels(kit, file, args, opts)
+    if (args[0] === "acp" && args.includes("--login")) {
+      const child = new FakeChild(kit, file, args)
+      kit.loginSpawns.push({ child, env: opts.env })
+      child.onStdin = (code) => {
+        if (code.trim() === "invalid") {
+          child.stderr.emit("data", "invalid_grant")
+          child.finish(1)
+          return
+        }
+        kit.signIns.set(opts.env.AGY_BRIDGE_PROFILE_DIR, JSON.stringify({
+          token: { access_token: `synthetic-${code.trim()}`, refresh_token: `refresh-${code.trim()}` },
+          id_token_email: code.trim(),
+        }))
+        child.finish(0)
+      }
+      setImmediate(() => child.stdout.emit("data", "https://accounts.google.com/synthetic-test\n"))
+      return child
+    }
+    if (options.usageReport && (args[0] === "--version" || args.includes("/usage"))) {
+      const child = new FakeChild(kit, file, args)
+      setImmediate(() => {
+        child.stdout.emit("data", Buffer.from(args[0] === "--version" ? "1.5.9\n" : JSON.stringify(options.usageReport(opts.env))))
+        child.finish(0)
+      })
+      return child
+    }
     if (args[0] === "acp" && args.includes("--help")) {
       // agy's flag usage goes to stderr; an older agy doesn't list the flag
       kit.helpSpawns.push({ file, args })
@@ -502,26 +535,39 @@ export async function createBridgeKit(options = {}) {
   // signin.mjs's keyring read; never the real keychain
   const execFile = (file, args = [], opts, callback) => {
     if (typeof opts === "function") callback = opts
-    kit.execFiles.push({ file, args })
-    const stored = options.storedSignIn
+    kit.execFiles.push({ file, args, env: opts?.env })
+    const stored = kit.signIns.get(opts?.env?.AGY_BRIDGE_PROFILE_DIR) ?? options.storedSignIn
     setImmediate(() => stored === "missing" || stored === undefined
       ? callback(Object.assign(new Error("not found (test)"), { code: 44 }), "", "")
       : callback(null, stored, ""))
   }
-  const fakeServer = {
-    once() { return fakeServer },
-    on() { return fakeServer },
-    listen(_port, _host, callback) { setImmediate(callback); return fakeServer },
-    unref() { return fakeServer },
-    close() {},
-    address() { return { address: "127.0.0.1", family: "IPv4", port: 45999 } },
+  // Private keychain preparation uses synthetic files, never macOS security.
+  const execFileSync = (_file, args, opts) => {
+    const keychain = path.join(opts.env.HOME, "Library", "Keychains", "account.keychain-db")
+    const preferences = path.join(opts.env.HOME, "Library", "Preferences", "com.apple.security.plist")
+    if (args[0] === "create-keychain") fs.writeFileSync(keychain, "synthetic")
+    if (["list-keychains", "default-keychain"].includes(args[0])) {
+      if (args.includes("-s")) fs.writeFileSync(preferences, "synthetic")
+      else return `"${keychain}"\n`
+    }
+    return ""
   }
   const overrides = {
-    "node:child_process": { spawn, spawnSync, execFile },
+    "node:child_process": { spawn, spawnSync, execFile, execFileSync },
     "node:net": {
       createServer(handler) {
+        const port = 45999 + kit.controlHandlers.size
         kit.controlHandler = handler
-        return fakeServer
+        kit.controlHandlers.set(port, handler)
+        const server = {
+          once() { return server },
+          on() { return server },
+          listen(_port, _host, callback) { setImmediate(callback); return server },
+          unref() { return server },
+          close() {},
+          address() { return { address: "127.0.0.1", family: "IPv4", port } },
+        }
+        return server
       },
     },
     "node:os": { homedir: () => home, tmpdir: () => tmp },
@@ -555,6 +601,7 @@ export async function createBridgeKit(options = {}) {
     if (cache.has(key)) return cache.get(key)
     let module
     if (key === "./usage.mjs") module = sourceModule(USAGE_FILE, "", usageUrl)
+    else if (key === "./accounts.mjs") module = sourceModule(path.join(REPO_DIR, "accounts.mjs"), "", pathToFileURL(path.join(REPO_DIR, "accounts.mjs")).href)
     else if (key === "./profile.mjs") module = sourceModule(path.join(REPO_DIR, "profile.mjs"), "", pathToFileURL(path.join(REPO_DIR, "profile.mjs")).href)
     else if (key === "./model-ids.mjs") module = sourceModule(MODEL_IDS_FILE, "", modelIdsUrl)
     else if (key === "./platform.mjs") module = sourceModule(PLATFORM_FILE, "", platformUrl)
@@ -572,7 +619,10 @@ export async function createBridgeKit(options = {}) {
     cache.set(key, module)
     return module
   }
-  const root = sourceModule(options.indexPath || INDEX_FILE, TEST_EXPORTS, indexUrl, options.indexTransform)
+  const root = sourceModule(options.indexPath || INDEX_FILE, TEST_EXPORTS, indexUrl, (source) => {
+    const exposed = source.replace("return { createPlugin,", "return { Turn, allProcs, pool, execOnce, findAgy, canonicalBody, conversationKey, renderInitialPromptParts, reapOnExit, createPlugin,")
+    return options.indexTransform ? options.indexTransform(exposed) : exposed
+  })
   await root.link(linker)
   await root.evaluate()
   const ns = root.namespace

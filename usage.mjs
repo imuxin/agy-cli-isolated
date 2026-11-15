@@ -68,7 +68,7 @@ function cadence(bucket, id, name) {
 
 // agy's command report is not its token-usage object or a model-availability list.
 // Unknown quota is not evidence of exhaustion or a full allowance.
-export function parseUsageReport(value) {
+export function parseUsageReport(value, resolveModels = modelsInGroup) {
   let report
   try { report = typeof value === "string" ? JSON.parse(value) : value } catch {
     throw new UsageError("agy returned an invalid usage report.")
@@ -92,7 +92,7 @@ export function parseUsageReport(value) {
         ?? (remaining?.case === "remainingFraction" ? remaining.value : undefined)
       const known = typeof fraction === "number" && Number.isFinite(fraction) && fraction >= 0 && fraction <= 1
       const resetsAt = resetTime(field(bucket, "resetTime", "reset_time"))
-      const ids = modelsInGroup(group)
+      const ids = resolveModels(group)
       windows.push({
         name: `${pool} · ${period.name}`,
         // This feature displays quota only; it must not change model routing.
@@ -240,6 +240,7 @@ export async function fetchUsage(agy, {
   maxOutputBytes = MAX_OUTPUT_BYTES,
   signal,
   tempRoot = os.tmpdir(),
+  resolveModels = modelsInGroup,
   deadline = Date.now() + timeout(timeoutMs),
 } = {}) {
   if (!agy) throw new UsageError("agy CLI not found. Install it and sign in from Magpie.")
@@ -288,7 +289,7 @@ export async function fetchUsage(agy, {
       }
       throw commandFailure(result.stderr + "\n" + result.stdout)
     }
-    return parseUsageReport(result.stdout)
+    return parseUsageReport(result.stdout, resolveModels)
   } finally {
     for (let attempt = 0; attempt < 4; attempt++) {
       try {

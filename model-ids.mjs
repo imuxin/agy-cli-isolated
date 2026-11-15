@@ -9,15 +9,16 @@
 // in it, plus the bare family id itself even when agy lists no variant of
 // that name (the catalog serves it as its default).
 
+export function createModelIndex() {
 let rows = null
 let index = new Map()
 
-export function storeCatalogRows(list) {
+function storeCatalogRows(list) {
   rows = Array.isArray(list) ? list.filter(model => model && typeof model.id === "string" && model.id) : null
   index = null
 }
 
-export function catalogRows() {
+function catalogRows() {
   return rows ? [...rows] : null
 }
 
@@ -39,7 +40,7 @@ function listedNames(description) {
     .filter(Boolean)
 }
 
-export function nameIndex() {
+function nameIndex() {
   if (index) return index
   index = new Map()
   if (rows) {
@@ -75,7 +76,7 @@ export function nameIndex() {
 // matched against the catalog's display names; a name that matches nothing
 // is left out, as is a group whose description names no model and whose own
 // name isn't a catalog name either.
-export function modelsInGroup(group) {
+function modelsInGroup(group) {
   const index = nameIndex()
   if (!index.size) return []
   const ids = new Set()
@@ -91,3 +92,8 @@ export function modelsInGroup(group) {
   }
   return [...ids].sort()
 }
+
+return { storeCatalogRows, catalogRows, nameIndex, modelsInGroup }
+}
+
+export const { storeCatalogRows, catalogRows, nameIndex, modelsInGroup } = createModelIndex()

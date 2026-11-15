@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { after, test } from "node:test"
+import { exposeRuntime } from "./runtime-source.mjs"
 
 // Expose private seams from an isolated copy, without adding production exports.
 // These cases cover the assistant-prefill tail: run positions, validation, the
@@ -13,7 +14,7 @@ const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "agy-prefill-tail-test-"
 const entry = new URL("../index.mjs", import.meta.url)
 let source = fs.readFileSync(entry, "utf8")
 source = source.replace(/from "(\.\/[^"\n]+)"/g, (_, target) => `from ${JSON.stringify(new URL(target, entry).href)}`)
-fs.writeFileSync(path.join(workspace, "bridge.mjs"), source + "\nexport { trailingMessages, prefillRun, assistantTextOf, validateBody, renderTurnMessagesParts, renderInitialPromptParts };\n")
+fs.writeFileSync(path.join(workspace, "bridge.mjs"), exposeRuntime(source, "trailingMessages, prefillRun, assistantTextOf, validateBody, renderTurnMessagesParts, renderInitialPromptParts"))
 const { trailingMessages, prefillRun, assistantTextOf, validateBody, renderTurnMessagesParts, renderInitialPromptParts } = await import(pathToFileURL(path.join(workspace, "bridge.mjs")).href)
 after(() => fs.rmSync(workspace, { recursive: true, force: true }))
 

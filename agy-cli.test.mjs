@@ -15,6 +15,7 @@ function run(args, timeout) {
 }
 
 for (const [name, mocks] of [
+  ["accounts.mjs", false],
   ["platform.mjs", true],
   ["compat.mjs", true],
   ["prefill.mjs", false],

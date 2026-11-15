@@ -200,12 +200,14 @@ export function isDead(s) {
   return s?.state === "present" && dead.has(s.fp)
 }
 
+export function createSignInReader(getEnv = () => process.env) {
+const readForAccount = (options) => readStoredSignIn({ env: getEnv(), ...options })
 let cached = null
 let reading = null
 
 // storedSignIn is readStoredSignIn, shared for CACHE_MS and while one read
 // is under way.
-export async function storedSignIn({ read = readStoredSignIn, fresh = false } = {}) {
+async function storedSignIn({ read = readForAccount, fresh = false } = {}) {
   if (!fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.value
   if (!reading) {
     const r = Promise.resolve().then(() => read()).catch((error) => {
@@ -228,7 +230,7 @@ export async function storedSignIn({ read = readStoredSignIn, fresh = false } = 
 // storedSignInNow is the last read without waiting for one (null before
 // the first), starting a new read when it is old: a request isn't held up
 // by a keyring read (on Windows, PowerShell).
-export function storedSignInNow({ read = readStoredSignIn } = {}) {
+function storedSignInNow({ read = readForAccount } = {}) {
   if (!cached || Date.now() - cached.at >= CACHE_MS) storedSignIn({ read }).catch(() => {})
   return cached?.value ?? null
 }
@@ -236,14 +238,19 @@ export function storedSignInNow({ read = readStoredSignIn } = {}) {
 // backgroundBlocked is why agy must not be run for work nobody asked for
 // (a usage read, a model listing): its sign-in can't serve it and running
 // it would start a Google sign-in. "" when it may run.
-export async function backgroundBlocked(opts) {
+async function backgroundBlocked(opts) {
   const s = await storedSignIn(opts)
   return cannotSignIn(s) || (isDead(s) ? "agy's sign-in no longer works" : "")
 }
 
 // forgetStoredSignIn drops the cached read (after a sign-in, and in tests).
-export function forgetStoredSignIn({ dead: clearDead = false } = {}) {
+function forgetStoredSignIn({ dead: clearDead = false } = {}) {
   cached = null
   reading = null
   if (clearDead) dead.clear()
 }
+
+return { storedSignIn, storedSignInNow, backgroundBlocked, forgetStoredSignIn, read: readForAccount }
+}
+
+export const { storedSignIn, storedSignInNow, backgroundBlocked, forgetStoredSignIn } = createSignInReader()
