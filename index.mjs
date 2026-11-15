@@ -9,6 +9,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createUsageReader } from "./usage.mjs"
+import { storeCatalogRows } from "./model-ids.mjs"
 import { backgroundBlocked, cannotSignIn, forgetStoredSignIn, storedEmail, storedSignIn, storedSignInNow } from "./signin.mjs"
 import { sanitizePatternFields } from "./re2-pattern.mjs"
 import { startLogin } from "./login.mjs"
@@ -634,6 +635,8 @@ function buildModelCatalog(list) {
 }
 
 function fallbackModelCatalog(agyPath = null) {
+  // The usage reader names ids on its windows from the catalog being served.
+  storeCatalogRows(FALLBACK_MODELS)
   return { agyPath, list: FALLBACK_MODELS, catalog: null, offeredKey: null, isFallback: true, fetchedAt: 0, lastAttemptAt: null }
 }
 
@@ -706,6 +709,8 @@ function startingModelCatalog(agyPath) {
     acpOfferedModels = new Map(saved.offered.map(({ id, name }) => [id, name]))
     acpOfferedKey = [...acpOfferedModels.keys()].sort().join("\n")
   }
+  // The usage reader names ids on its windows from the catalog being served.
+  storeCatalogRows(saved.list)
   return { agyPath, list: saved.list, catalog: null, offeredKey: null, isFallback: false, fetchedAt: 0, lastAttemptAt: null }
 }
 
@@ -721,6 +726,8 @@ function useAgyPath(agyPath) {
 
 function storeListedCatalog(agyPath, list, lastAttemptAt) {
   saveCatalog(agyPath, { list })
+  // The usage reader names ids on its windows from the catalog being served.
+  storeCatalogRows(list)
   cachedModelCatalog = {
     agyPath,
     list,

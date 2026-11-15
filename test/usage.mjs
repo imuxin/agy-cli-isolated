@@ -7,10 +7,109 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import { createUsageReader, fetchUsage, parseUsageReport } from "../usage.mjs"
+import { modelsInGroup, storeCatalogRows } from "../model-ids.mjs"
 import { forgetStoredSignIn } from "../signin.mjs"
 
+// Live data captured from `agy -p /usage --output-format json` (agy 1.5.9,
+// 2026-11-15), group descriptions pasted verbatim.
+const LIVE_REPORT = {
+  status: "SUCCESS",
+  command: {
+    name: "usage",
+    data: {
+      description: "Within each group, models share a weekly limit and a 5-hour limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. The 5-hour limit smooths out aggregate demand to fairly distribute global capacity across all users, while your weekly limit is tied directly to your individual tier.",
+      groups: [
+        {
+          name: "Gemini Models",
+          description: "Models within this group: Gemini 4 Hydrogen, Gemini 3.8 Flash",
+          buckets: [
+            { id: "gemini-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 1, reset_time: "2026-11-22T11:19:33Z" },
+            { id: "gemini-5h", name: "Five Hour Limit Remaining", window: "5h", remaining_fraction: 1, reset_time: "2026-11-15T16:19:33Z" },
+          ],
+        },
+        {
+          name: "Claude and GPT models",
+          description: "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+          buckets: [
+            { id: "3p-weekly", name: "Weekly Limit Remaining", description: "You have used some of your weekly limit, it will fully refresh in 4 days, 21 hours.", window: "weekly", remaining_fraction: 0.3360503911972046, reset_time: "2026-11-20T09:01:10Z" },
+            { id: "3p-5h", name: "Five Hour Limit Remaining", window: "5h", remaining_fraction: 1, reset_time: "2026-11-15T16:19:33Z" },
+          ],
+        },
+        {
+          name: "Gemini 4 Argon",
+          description: "For paid Pro plans, Argon quota is separate. Higher Argon quota (included as part of the larger Gemini quota bucket) is available on Ultra plans.",
+          buckets: [
+            { id: "gemini-argon-wtu-weekly", name: "Gemini 4 Argon Weekly Limit", window: "weekly", remaining_fraction: 1, reset_time: "2026-11-22T11:19:33Z" },
+          ],
+        },
+      ],
+    },
+  },
+}
+
+// The rows `agy models` listed for the same account, verbatim.
+const LIVE_MODEL_ROWS = [
+  { id: "gemini-4-argon-medium", name: "Gemini 4 Argon (Medium)", effort: "medium" },
+  { id: "gemini-4-argon-high", name: "Gemini 4 Argon (High)", effort: "high" },
+  { id: "gemini-4-argon-low", name: "Gemini 4 Argon (Low)", effort: "low" },
+  { id: "gemini-4-hydrogen-high", name: "Gemini 4 Hydrogen (High)", effort: "high" },
+  { id: "gemini-4-hydrogen-xhigh", name: "Gemini 4 Hydrogen (XHigh)", effort: "xhigh" },
+  { id: "gemini-4-hydrogen-medium", name: "Gemini 4 Hydrogen (Medium)", effort: "medium" },
+  { id: "gemini-4-hydrogen-low", name: "Gemini 4 Hydrogen (Low)", effort: "low" },
+  { id: "gemini-pro-orchestrator-g1-pro", name: "Orchestrator (Argon)" },
+  { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)", effort: "high" },
+  { id: "gemini-3.8-flash-medium", name: "Gemini 3.8 Flash (Medium)", effort: "medium" },
+  { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)", effort: "low" },
+  { id: "claude-opus-5-5-low", name: "Claude Opus 5.5 (Low)", effort: "low" },
+  { id: "claude-opus-5-5-medium", name: "Claude Opus 5.5 (Medium)", effort: "medium" },
+  { id: "claude-opus-5-5-high", name: "Claude Opus 5.5 (High)", effort: "high" },
+  { id: "claude-sonnet-5-5-low", name: "Claude Sonnet 5.5 (Low)", effort: "low" },
+  { id: "claude-sonnet-5-5-medium", name: "Claude Sonnet 5.5 (Medium)", effort: "medium" },
+  { id: "claude-sonnet-5-5-high", name: "Claude Sonnet 5.5 (High)", effort: "high" },
+  { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)", effort: "medium" },
+]
+
+test("a live report names on each window the ids the listed catalog serves", () => {
+  storeCatalogRows(LIVE_MODEL_ROWS)
+  const result = parseUsageReport(structuredClone(LIVE_REPORT))
+  assert.deepEqual(result.windows.map(w => w.models), [
+    ["gemini-3.8-flash", "gemini-3.8-flash-high", "gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-4-hydrogen", "gemini-4-hydrogen-high", "gemini-4-hydrogen-low", "gemini-4-hydrogen-medium", "gemini-4-hydrogen-xhigh"],
+    ["gemini-3.8-flash", "gemini-3.8-flash-high", "gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-4-hydrogen", "gemini-4-hydrogen-high", "gemini-4-hydrogen-low", "gemini-4-hydrogen-medium", "gemini-4-hydrogen-xhigh"],
+    ["claude-opus-5-5", "claude-opus-5-5-high", "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-sonnet-5-5", "claude-sonnet-5-5-high", "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "gpt-oss-120b", "gpt-oss-120b-medium"],
+    ["claude-opus-5-5", "claude-opus-5-5-high", "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-sonnet-5-5", "claude-sonnet-5-5-high", "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "gpt-oss-120b", "gpt-oss-120b-medium"],
+    // Argon's description names no model; its group name is a catalog name.
+    ["gemini-4-argon", "gemini-4-argon-high", "gemini-4-argon-low", "gemini-4-argon-medium"],
+  ])
+  assert.deepEqual(result.windows.map(w => w.used), [0, 0, 66.394961, 0, 0])
+  // agy names a family in the description even though it lists no bare id.
+  assert.ok(result.windows[2].models.includes("gpt-oss-120b"))
+  storeCatalogRows(null)
+})
+
+test("ids on windows follow the catalog, and names agy adds match nothing until it lists them", () => {
+  storeCatalogRows(LIVE_MODEL_ROWS)
+  // A renamed model: the description keeps the old name, the catalog the new.
+  assert.deepEqual(modelsInGroup({ description: "Models within this group: Claude Opus 5.5", name: "x" }),
+    ["claude-opus-5-5", "claude-opus-5-5-high", "claude-opus-5-5-low", "claude-opus-5-5-medium"])
+  assert.deepEqual(modelsInGroup({ description: "Models within this group: Claude Opus 6", name: "x" }), [])
+  assert.deepEqual(modelsInGroup({ description: "Models within this group: Claude Opus 5.5 and Claude Opus 6", name: "x" }),
+    ["claude-opus-5-5", "claude-opus-5-5-high", "claude-opus-5-5-low", "claude-opus-5-5-medium"])
+  // A group whose name matches no catalog name gets no ids, not guesses.
+  assert.deepEqual(modelsInGroup({ name: "Veo models" }), [])
+  // No catalog yet: no ids at all, windows stay account-level.
+  storeCatalogRows(null)
+  assert.deepEqual(modelsInGroup({ description: "Models within this group: Claude Opus 5.5" }), [])
+  // The separator list "A, B and C" also splits with no comma before "and".
+  storeCatalogRows([{ id: "m1", name: "Model One" }, { id: "m2", name: "Model Two" }])
+  assert.deepEqual(modelsInGroup({ description: "Models within this group: Model One and Model Two" }), ["m1", "m2"])
+  // One display name used by two families matches neither.
+  storeCatalogRows([{ id: "a-high", name: "Twin (High)", effort: "high" }, { id: "b", name: "Twin" }, { id: "c", name: "Solo" }])
+  assert.deepEqual(modelsInGroup({ description: "Models within this group: Twin, Solo" }), ["c"])
+  storeCatalogRows(null)
+})
+
 const report = groups => ({ status: "SUCCESS", command: { name: "usage", data: { groups } } })
-const group = (buckets, name = "Gemini Models") => ({ name, buckets })
+const group = (buckets, name = "Gemini Models", description = "For paid Pro plans, Argon quota is separate.") => ({ name, description, buckets })
 const bucket = (overrides = {}) => ({ id: "gemini-5h", name: "Five Hour Limit Remaining", window: "5h", remaining_fraction: 0.75, ...overrides })
 
 test("maps all groups/cadences to display-only Magpie windows, without invented identity", () => {
@@ -181,11 +280,15 @@ const record = {
 }
 fs.appendFileSync(process.env.TEST_LOG, JSON.stringify(record) + "\n")
 const mode = process.env.TEST_MODE
-if (mode === "version-hang" && version || mode === "hang" && !version) setInterval(() => {}, 1000)
+if (mode === "version-hang" && version || mode === "hang" && !version) {
+  if (process.env.TEST_ERROR) console.error(process.env.TEST_ERROR)
+  setInterval(() => {}, 1000)
+}
 else if (version) {
   console.log(process.env.TEST_VERSION || "1.3.5")
 } else if (mode === "fail") {
   console.error(process.env.TEST_ERROR || "oops secret@example.com https://secret.invalid/token")
+  if (process.env.TEST_FAILURE_REPORT) console.log(process.env.TEST_FAILURE_REPORT)
   process.exitCode = 1
 } else if (mode === "oversize") {
   process.stdout.write("x".repeat(1024 * 1024 + 1))
@@ -509,6 +612,68 @@ test("reports sanitized failures and preserves the bridge sign-in; failures back
   }
 })
 
+const startupAuthLogs = [
+  "W1115 15:13:30.249469      10 cache.go:157] error getting token source: You are not logged into Antigravity.",
+  "I1115 15:13:30.317328       1 server_oauth.go:226] OAuth: authenticated successfully",
+  "I1115 15:13:32.684688       1 printmode.go:411] Print mode: silent auth succeeded",
+].join("\n")
+
+test("startup auth diagnostics cannot invalidate a usable sign-in on command failure", async t => {
+  for (const [stderr, finalError] of [
+    [startupAuthLogs + "\nconnection reset by peer", undefined],
+    [startupAuthLogs, "quota request timed out"],
+    [startupAuthLogs, undefined],
+  ]) {
+    forgetStoredSignIn({ dead: true })
+    t.after(() => forgetStoredSignIn({ dead: true }))
+    const f = await fixture(t, {
+      TEST_MODE: "fail", TEST_ERROR: stderr,
+      ...(finalError ? { TEST_FAILURE_REPORT: JSON.stringify({ status: "ERROR", error: finalError }) } : {}),
+    })
+    const stored = { state: "present", fp: "healthy", canRenew: true, expired: false }
+    let clock = 0
+    const read = createUsageReader(() => f.executable, { ...f.options, signIn: async () => stored, now: () => clock })
+    const result = await read()
+    assert.equal(result.signIn, "kept")
+    f.env.TEST_MODE = ""
+    clock += 10 * 60 * 1000
+    assert.equal((await read()).windows.length, 1, "same credential must recover without logging in")
+  }
+})
+
+test("a final structured error takes precedence over contradictory diagnostics", async t => {
+  for (const [stderr, error, signIn] of [
+    ["Authentication required", "connection reset", "kept"],
+    [startupAuthLogs + "\nconnection reset", "Authentication required", "expired"],
+    [startupAuthLogs, "invalid_grant: Token has been expired or revoked", "expired"],
+  ]) {
+    const f = await fixture(t, {
+      TEST_MODE: "fail", TEST_ERROR: stderr,
+      TEST_FAILURE_REPORT: JSON.stringify({ status: "ERROR", error }),
+    })
+    assert.equal((await createUsageReader(() => f.executable, f.options)()).signIn, signIn)
+  }
+  assert.throws(() => parseUsageReport({ status: "ERROR", error: "connection reset", response: "Authentication required" }), e => e.kind !== "auth")
+})
+
+test("a timeout with only OAuth diagnostics backs off and recovers with the same sign-in", async t => {
+  forgetStoredSignIn({ dead: true })
+  t.after(() => forgetStoredSignIn({ dead: true }))
+  const f = await fixture(t, { TEST_MODE: "hang", TEST_ERROR: startupAuthLogs })
+  const stored = { state: "present", fp: "refreshing", canRenew: true, expired: true }
+  let clock = 0
+  const read = createUsageReader(() => f.executable, { ...f.options, timeoutMs: 3000, now: () => clock, signIn: async () => stored })
+  assert.equal((await read()).signIn, "kept")
+  const runs = (await f.logs()).length
+  assert.equal(runs, 2, "the report child must have started")
+  assert.equal((await read()).signIn, "kept")
+  assert.equal((await f.logs()).length, runs)
+  f.env.TEST_MODE = ""
+  clock += 10 * 60 * 1000
+  assert.equal((await read()).windows.length, 1)
+  await f.assertClean()
+})
+
 test("backoff doubles per failure up to six hours", async t => {
   const f = await fixture(t, { TEST_MODE: "fail", TEST_ERROR: "unrecognized" })
   let clock = 0
@@ -576,24 +741,37 @@ test("a sign-in agy failed on isn't run again in the background until another is
   await f.assertClean()
 })
 
-test("a run that hangs with an ended access token and says nothing marks the sign-in dead", async t => {
-  forgetStoredSignIn({ dead: true })
-  t.after(() => forgetStoredSignIn({ dead: true }))
-  const f = await fixture(t, { TEST_MODE: "hang" })
-  const stored = { state: "present", fp: "hung", canRenew: true, expiresAt: 1, expired: true }
-  const read = createUsageReader(() => f.executable, { ...f.options, timeoutMs: 3000, signIn: async () => stored })
-  const result = await read()
-  assert.equal(result.signIn, "expired")
-  const runs = (await f.logs()).length
-  assert.equal((await read()).signIn, "expired")
-  assert.equal((await f.logs()).length, runs)
-  // a hang with a live access token is a hang, not a sign-in
-  const g = await fixture(t, { TEST_MODE: "hang" })
+test("a hung sign-in with an ended token is never restarted until the credential changes", async t => {
+  for (const output of ["", "Open https://accounts.google.com/ to sign in", startupAuthLogs + "\nWaiting for browser authentication"]) {
+    forgetStoredSignIn({ dead: true })
+    t.after(() => forgetStoredSignIn({ dead: true }))
+    const f = await fixture(t, { TEST_MODE: "hang", TEST_ERROR: output })
+    let stored = { state: "present", fp: "hung", canRenew: true, expiresAt: 1, expired: true }
+    let clock = 0
+    const read = createUsageReader(() => f.executable, { ...f.options, timeoutMs: 3000, now: () => clock, signIn: async () => stored })
+    assert.equal((await read()).signIn, "expired")
+    const runs = (await f.logs()).length
+    assert.equal(runs, 2, "the report child must have started")
+    f.env.TEST_MODE = ""
+    for (const hours of [0, 7, 24]) {
+      clock = hours * 60 * 60 * 1000
+      assert.equal((await read()).signIn, "expired")
+      assert.equal((await f.logs()).length, runs, "background polling must not reopen the browser")
+    }
+    stored = { ...stored, fp: "signed-in-again", expired: false }
+    const result = await read()
+    assert.equal(result.signIn, "renewed")
+    assert.equal(result.windows.length, 1)
+    await f.assertClean()
+  }
+})
+
+test("a timeout with a live access token preserves the sign-in", async t => {
+  const f = await fixture(t, { TEST_MODE: "hang", TEST_ERROR: "Waiting for browser authentication" })
   const live = { state: "present", fp: "live", canRenew: true, expiresAt: Date.now() + 3600_000, expired: false }
-  const other = await createUsageReader(() => g.executable, { ...g.options, timeoutMs: 3000, signIn: async () => live })()
-  assert.equal(other.signIn, "kept")
+  const result = await createUsageReader(() => f.executable, { ...f.options, timeoutMs: 3000, signIn: async () => live })()
+  assert.equal(result.signIn, "kept")
   await f.assertClean()
-  await g.assertClean()
 })
 
 test("invalid and oversized stdout/stderr reports fail within the output budget", async t => {
