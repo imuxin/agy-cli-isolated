@@ -13,13 +13,13 @@ export class ProfileError extends Error {
 
 // Binary discovery keeps the real home. Only agy and security receive this home.
 export function accountProfile(env = process.env, platform = process.platform, home = os.homedir()) {
-  const mode = env.AGY_BRIDGE_PROFILE || (platform === "darwin" ? "isolated" : "shared")
+  const mode = env.AGY_BRIDGE_PROFILE || (["darwin", "linux"].includes(platform) ? "isolated" : "shared")
   if (!["isolated", "shared"].includes(mode)) throw new ProfileError("AGY_BRIDGE_PROFILE must be isolated or shared")
   if (mode === "shared") {
     if (env.AGY_BRIDGE_PROFILE_DIR) throw new ProfileError("AGY_BRIDGE_PROFILE_DIR requires isolated mode")
     return null
   }
-  if (platform !== "darwin") throw new ProfileError("isolated mode currently requires macOS")
+  if (platform !== "darwin" && platform !== "linux") throw new ProfileError("isolated mode requires macOS or Linux")
   const root = env.AGY_BRIDGE_PROFILE_DIR || path.join(env.XDG_STATE_HOME || path.join(home, ".local", "state"), "magpie-agy-bridge", "profile")
   if (!path.isAbsolute(root)) throw new ProfileError("AGY_BRIDGE_PROFILE_DIR must be an absolute path")
   const profile = {
@@ -27,8 +27,12 @@ export function accountProfile(env = process.env, platform = process.platform, h
     home: path.join(root, "home"),
     gemini: path.join(root, "home", ".gemini"),
     stateFile: path.join(root, "state", "sessions.json"),
-    keychain: path.join(root, "home", "Library", "Keychains", "account.keychain-db"),
-    passwordFile: path.join(root, "keychain-password"),
+  }
+  if (platform === "linux") {
+    profile.tokenFile = path.join(profile.gemini, "antigravity-cli", "antigravity-oauth-token")
+  } else {
+    profile.keychain = path.join(profile.home, "Library", "Keychains", "account.keychain-db")
+    profile.passwordFile = path.join(root, "keychain-password")
   }
   const overrides = {
     AGY_BRIDGE_GEMINI_DIR: profile.gemini,
@@ -53,6 +57,8 @@ export function profileEnv(env, profile) {
     XDG_DATA_HOME: path.join(profile.home, ".local", "share"),
     XDG_STATE_HOME: path.join(profile.root, "state"),
   }
+  // agy 1.5 uses its HOME token file in SSH sessions, even on a Linux desktop.
+  if (profile.tokenFile) result.SSH_CONNECTION = "127.0.0.1 0 127.0.0.1 0"
   // These select a different authentication source instead of the profile's Google account.
   for (const name of ["GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_ADC_AUTH", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_APPLICATION_CREDENTIALS"]) delete result[name]
   return result
@@ -101,10 +107,13 @@ export function prepareProfile(profile, env = process.env, { security = runSecur
   if (!profile) return profileEnv(env, null)
   if (deadline - Date.now() <= 0) {
     preparedProfiles.delete(profile.root)
-    throw new ProfileError("keychain preparation timed out")
+    throw new ProfileError("profile preparation timed out")
   }
   try {
-    for (const directory of [profile.root, profile.home, profile.gemini, path.dirname(profile.stateFile), path.dirname(profile.keychain), path.join(profile.home, "Library", "Preferences")]) {
+    const credentialDirs = profile.tokenFile
+      ? [path.dirname(profile.tokenFile)]
+      : [path.dirname(profile.keychain), path.join(profile.home, "Library", "Preferences")]
+    for (const directory of [profile.gemini, path.dirname(profile.stateFile), ...credentialDirs]) {
       const relative = path.relative(profile.root, directory)
       let current = profile.root
       for (const part of ["", ...relative.split(path.sep).filter(Boolean)]) {
@@ -114,6 +123,14 @@ export function prepareProfile(profile, env = process.env, { security = runSecur
         if (!info.isDirectory()) throw new ProfileError(`${current} must be a real directory`)
         fs.chmodSync(current, 0o700)
       }
+    }
+    if (profile.tokenFile) {
+      const info = fs.lstatSync(profile.tokenFile, { throwIfNoEntry: false })
+      if (info) {
+        if (!info.isFile()) throw new ProfileError("private token must be a regular file")
+        if ((info.mode & 0o777) !== 0o600) fs.chmodSync(profile.tokenFile, 0o600)
+      }
+      return profileEnv(env, profile)
     }
     const preferences = path.join(profile.home, "Library", "Preferences", "com.apple.security.plist")
     for (const file of [profile.keychain, profile.passwordFile, preferences]) {

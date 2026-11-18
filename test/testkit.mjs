@@ -489,10 +489,15 @@ export async function createBridgeKit(options = {}) {
           child.finish(1)
           return
         }
-        kit.signIns.set(opts.env.AGY_BRIDGE_PROFILE_DIR, JSON.stringify({
+        const stored = JSON.stringify({
           token: { access_token: `synthetic-${code.trim()}`, refresh_token: `refresh-${code.trim()}` },
           id_token_email: code.trim(),
-        }))
+        })
+        if (options.platform === "linux" && opts.env.SSH_CONNECTION) {
+          fs.writeFileSync(path.join(opts.env.HOME, ".gemini", "antigravity-cli", "antigravity-oauth-token"), stored, { mode: 0o600 })
+        } else {
+          kit.signIns.set(opts.env.AGY_BRIDGE_PROFILE_DIR, stored)
+        }
         child.finish(0)
       }
       setImmediate(() => child.stdout.emit("data", "https://accounts.google.com/synthetic-test\n"))

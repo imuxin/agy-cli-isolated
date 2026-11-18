@@ -13,7 +13,7 @@ test("Windows discovery considers exe/cmd/bat, Path and LOCALAPPDATA", () => {
 })
 
 test("POSIX discovery and direct executable arguments do not use a shell", () => {
-  assert.deepEqual(agyCandidates({ PATH: '/usr/bin:/opt/bin' }, '/home/test', 'linux').slice(0, 2), ['/usr/bin/agy', '/opt/bin/agy'])
+  assert.deepEqual(agyCandidates({ PATH: '/usr/bin:/opt/bin' }, '/home/test', 'linux').slice(0, 3), ['/home/test/.local/share/magpie-agy-cli/agy', '/usr/bin/agy', '/opt/bin/agy'])
   for (const [file, platform] of [['/opt/agy', 'linux'], ['C:\\agy.exe', 'win32'], ['/opt/agy.cmd', 'linux']]) {
     const args = ['acp', '--add-dir', 'space & percent% quote"']
     assert.deepEqual(agySpawnSpec(file, args, platform), { file, args, options: {} })

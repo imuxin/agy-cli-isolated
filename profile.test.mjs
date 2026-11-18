@@ -89,11 +89,12 @@ afterEach(() => {
   for (const directory of temporary.splice(0)) fs.rmSync(directory, { recursive: true, force: true })
 })
 
-test("macOS defaults to isolated; other platforms default to shared", () => {
+test("macOS and Linux default to isolated; other platforms default to shared", () => {
   const home = path.resolve(os.tmpdir(), "synthetic-host")
   const root = path.join(home, ".local", "state", "magpie-agy-bridge", "profile")
   expect(accountProfile({}, "darwin", home).root).toBe(root)
-  for (const platform of ["linux", "win32", "freebsd"]) {
+  expect(accountProfile({}, "linux", home).root).toBe(root)
+  for (const platform of ["win32", "freebsd"]) {
     expect(accountProfile({}, platform, home)).toBeNull()
     expect(() => accountProfile({ AGY_BRIDGE_PROFILE: "isolated" }, platform, home)).toThrow(ProfileError)
   }
@@ -101,6 +102,29 @@ test("macOS defaults to isolated; other platforms default to shared", () => {
   const state = path.join(home, "custom-state")
   expect(accountProfile({ XDG_STATE_HOME: state }, "darwin", home).root)
     .toBe(path.join(state, "magpie-agy-bridge", "profile"))
+})
+
+test("Linux agy uses a private SSH-session token file while preserving desktop D-Bus", async () => {
+  const { env } = fixture()
+  const parent = { ...env, ...AUTH, DBUS_SESSION_BUS_ADDRESS: "unix:path=/desktop/bus" }
+  const opts = { env: parent, platform: "linux" }
+  const profile = accountProfile(parent, "linux")
+  const child = prepareProfile(profile, parent)
+  expect(child.HOME).toBe(profile.home)
+  expect(child.SSH_CONNECTION).toBe("127.0.0.1 0 127.0.0.1 0")
+  expect(child.DBUS_SESSION_BUS_ADDRESS).toBe(parent.DBUS_SESSION_BUS_ADDRESS)
+  expect(child.GEMINI_API_KEY).toBeUndefined()
+  expect(fs.existsSync(path.join(profile.home, "Library"))).toBe(false)
+  expect(await readStoredSignIn(opts)).toEqual({ state: "missing" })
+  fs.writeFileSync(profile.tokenFile, JSON.stringify({ token: { refresh_token: "synthetic" }, id_token_email: "one@example.invalid" }), { mode: 0o644 })
+  expect((await readStoredSignIn(opts)).state).toBe("present")
+  expect(await storedEmail(opts)).toBe("one@example.invalid")
+  expect(fs.statSync(profile.tokenFile).mode & 0o777).toBe(0o600)
+  fs.writeFileSync(profile.tokenFile, "broken")
+  await expect(readStoredSignIn(opts)).rejects.toThrow(ProfileError)
+  fs.unlinkSync(profile.tokenFile)
+  fs.symlinkSync("/invalid", profile.tokenFile)
+  await expect(storedEmail(opts)).rejects.toThrow(ProfileError)
 })
 
 test("an isolated profile fixes every credential and session path under its root", () => {

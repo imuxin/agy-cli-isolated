@@ -22,9 +22,9 @@ async function signIn(plugin, email) {
   return saved(result)
 }
 
-test("two accounts keep login, models, usage, tools and resumed sessions separate", async () => {
+for (const platform of ["darwin", "linux"]) test(`two accounts keep login, models, usage, tools and resumed sessions separate on ${platform}`, async () => {
   const kit = await createBridgeKit({
-    ...isolated,
+    ...isolated, platform,
     usageReport: env => ({
       status: "SUCCESS", command: { name: "usage", data: { groups: [{
         name: env.AGY_BRIDGE_PROFILE_DIR.includes("accounts") ? "Account Model" : "Default Model",
@@ -50,6 +50,8 @@ test("two accounts keep login, models, usage, tools and resumed sessions separat
       const result = await login.callback(`${i}@example.invalid`)
       assert.equal(result.type, "success", result.error)
       assert.equal(result.metadata.email, `${i}@example.invalid`)
+      assert.equal(result.key, `x-agy:${path.basename(roots[i])}`)
+      assert.equal(path.basename(path.dirname(roots[i])), "x-agy-accounts")
       return saved(result)
     }))
     assert.notEqual(accounts[0].key, accounts[1].key)
@@ -112,7 +114,7 @@ test("a missing or failed account cannot use another account's credentials", asy
     const failed = await kit.plugin.auth.methods[0].authorize()
     assert.equal((await failed.callback("invalid")).type, "failed")
     const root = kit.loginSpawns.at(-1).env.AGY_BRIDGE_PROFILE_DIR
-    const missing = { type: "api", key: `agy:${path.basename(root)}` }
+    const missing = { type: "api", key: `x-agy:${path.basename(root)}` }
     const loader = await kit.plugin.auth.loader(async () => missing)
     const before = kit.acpSpawns.length
     const response = await send(loader, baseBody())
@@ -122,7 +124,24 @@ test("a missing or failed account cannot use another account's credentials", asy
     kit.defaultPrompt = async agent => { await agent.text("still signed in") }
     const validLoader = await kit.plugin.auth.loader(async () => good)
     assert.equal((await readSse(await send(validLoader, baseBody()))).stopReason, "end_turn")
-    await assert.rejects(kit.plugin.auth.loader(async () => ({ key: "agy:../../outside" })), /unrecognized account/)
+    for (const key of [`agy:${path.basename(root)}`, "agy:0123456789abcdef", "x-agy:../../outside"]) {
+      await assert.rejects(kit.plugin.auth.loader(async () => ({ key })), /unrecognized account/)
+    }
+  } finally { await kit.dispose() }
+})
+
+test("Linux saved agy uses the host and an unauthenticated loader uses the private default", async () => {
+  const kit = await createBridgeKit({ ...isolated, platform: "linux", env: { AGY_BRIDGE_PROFILE: undefined } })
+  try {
+    assert.equal(kit.plugin.auth.single, false)
+    assert.equal(kit.plugin.auth.methods.length, 1)
+    assert.equal((await kit.request(baseBody())).status, 401)
+    kit.defaultPrompt = async agent => { await agent.text("host") }
+    const loader = await kit.plugin.auth.loader(async () => ({ key: "agy" }))
+    assert.equal((await readSse(await send(loader, baseBody()))).stopReason, "end_turn")
+    const env = kit.acpSpawns.find(({ env }) => env.AGY_BRIDGE_TOKEN).env
+    assert.equal(env.HOME, kit.home)
+    assert.equal(env.AGY_BRIDGE_PROFILE, "shared")
   } finally { await kit.dispose() }
 })
 

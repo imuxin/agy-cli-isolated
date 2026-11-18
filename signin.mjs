@@ -1,3 +1,4 @@
+import fs from "node:fs/promises"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { accountProfile, prepareProfile, ProfileError } from "./profile.mjs"
@@ -123,6 +124,17 @@ export function emailOf(raw) {
 async function readStoredValue({ platform = process.platform, exec = run, env = process.env, prepare = prepareProfile, deadline = Date.now() + READ_TIMEOUT_MS } = {}) {
   const profile = accountProfile(env, platform)
   let childEnv = profile ? prepare(profile, env, { deadline }) : env
+  if (profile?.tokenFile) {
+    let raw
+    try {
+      raw = await fs.readFile(profile.tokenFile, "utf8")
+    } catch (error) {
+      if (error.code === "ENOENT") return { state: "missing" }
+      throw new ProfileError("cannot read the private token file")
+    }
+    if (parseStored(raw).state === "unknown") throw new ProfileError("unrecognized private sign-in; sign in again in Magpie")
+    return { raw }
+  }
   // tests, and setups this reading doesn't fit, turn it off
   if (childEnv.AGY_BRIDGE_STORED_SIGNIN === "skip") return { state: "unknown" }
   // agy signs in with these instead of a stored Google sign-in

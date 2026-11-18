@@ -1,7 +1,7 @@
 {
   "name": "agy-cli-isolated",
-  "version": "0.1.66-isolated.1",
-  "description": "Magpie/OpenCode agy CLI provider with an isolated macOS account environment, private Keychain, and ACP sessions",
+  "version": "0.1.66-isolated.2",
+  "description": "Magpie/OpenCode agy CLI provider with private macOS and Linux accounts and isolated ACP sessions",
   "type": "module",
   "main": "./opencode.mjs",
   "exports": {
