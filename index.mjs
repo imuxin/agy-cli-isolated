@@ -199,9 +199,7 @@ let cachedAgyPath
 let cachedAgySearchKey
 let controlServer
 let controlServerPromise
-let shimDir
-// Only a shim dir this process made is removed at exit; the shared Windows nc.exe dir stays.
-let shimDirOwned = false
+let shim
 let shimDirPromise
 
 function configuredTimeout(name, fallback) {
@@ -1005,34 +1003,60 @@ function shellQuote(value) {
 // earlier in agy's PATH runs the bridge's stdio MCP server instead, so the
 // connection is authenticated by the per-process token in its environment.
 async function ensureShimDir() {
-  // Another host's sweep can take a shared dir that sat unused for a week.
-  if (shimDir && !shimDirOwned && !await isFileWithBytes(path.join(shimDir, "nc.exe"))) {
-    shimDir = undefined
-    shimDirPromise = null
-  }
   if (shimDirPromise) return shimDirPromise
   shimDirPromise = (async () => {
-    if (process.platform === "win32") {
+    const windows = process.platform === "win32"
+    // Temporary files can disappear while the plugin host still has the path cached.
+    if (shim && await isUsableShim(path.join(shim.dir, shim.name), windows)) return shim.dir
+
+    if (windows && !shim?.owned) {
       const shared = await windowsNcDir().catch(() => null)
       if (shared) {
-        shimDir = shared
+        shim = { dir: shared, name: "nc.exe", owned: false }
         return shared
       }
     }
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "magpie-agy-bridge-bin-"))
-    if (process.platform === "win32") {
-      await fs.promises.writeFile(path.join(dir, "nc.cmd"),
-        windowsMcpShim(process.execPath, MCP_SERVER_PATH))
-    } else {
-      await fs.promises.writeFile(path.join(dir, "nc"),
-        `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(MCP_SERVER_PATH)}\n`, { mode: 0o700 })
+
+    const name = windows ? "nc.cmd" : "nc"
+    const script = windows
+      ? windowsMcpShim(process.execPath, MCP_SERVER_PATH)
+      : `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(MCP_SERVER_PATH)}\n`
+    if (shim?.owned) {
+      try {
+        // Keep the path usable for any agy processes already using this directory.
+        await writeShimFile(path.join(shim.dir, name), script, windows)
+        return shim.dir
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error
+      }
     }
-    shimDir = dir
-    shimDirOwned = true
+
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "magpie-agy-bridge-bin-"))
+    await writeShimFile(path.join(dir, name), script, windows)
+    shim = { dir, name, owned: true }
     return dir
   })()
-  shimDirPromise.catch(() => { shimDirPromise = null })
-  return shimDirPromise
+  try {
+    return await shimDirPromise
+  } finally {
+    shimDirPromise = null
+  }
+}
+
+async function isUsableShim(file, windows) {
+  if (!await isFileWithBytes(file)) return false
+  if (windows) return true
+  try {
+    await fs.promises.access(file, fs.constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function writeShimFile(file, script, windows) {
+  await fs.promises.writeFile(file, script, { mode: 0o700 })
+  if (!windows) await fs.promises.chmod(file, 0o700)
 }
 
 // Windows: a dir holding only nc.exe, a GUI-subsystem build of mcp-server.mjs
@@ -6347,8 +6371,8 @@ function reapOnExit() {
       try { fs.rmSync(proc.workspace, { recursive: true, force: true, maxRetries: windows ? 10 : 0, retryDelay: 50 }) } catch {}
     }
   }
-  if (shimDir && shimDirOwned) {
-    try { fs.rmSync(shimDir, { recursive: true, force: true }) } catch {}
+  if (shim?.owned) {
+    try { fs.rmSync(shim.dir, { recursive: true, force: true }) } catch {}
   }
 }
 

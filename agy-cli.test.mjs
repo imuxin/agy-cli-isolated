@@ -29,6 +29,7 @@ for (const [name, mocks] of [
   ["steer-in-session.mjs", false],
   ["repeat-batch.mjs", false],
   ["conversation-key.mjs", false],
+  ["mcp-shim.mjs", false],
   ["windows-nc.mjs", false],
 ]) {
   test(`test/${name}`, () => {
