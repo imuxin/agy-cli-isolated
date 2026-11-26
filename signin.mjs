@@ -15,10 +15,8 @@ import { accountProfile, prepareProfile, ProfileError } from "./profile.mjs"
 // Why this exists: an agy that isn't signed in, or whose sign-in Google no
 // longer takes, starts its own Google sign-in when it runs, and on Windows
 // it opens the browser through ShellExecuteW, which no BROWSER or PATH
-// shim can stop. The usage refresh ran agy every few minutes, and a
-// signed-out agy opened the browser 235 times in one day
-// (JZGiVvkSOA75376 on X). So agy is not run for background work while
-// this says it can't be signed in.
+// shim can stop. Background work checks for a usable stored sign-in
+// before running agy.
 //
 // state:
 //   "missing"  no sign-in is stored: agy is not signed in.
@@ -199,21 +197,8 @@ export function cannotSignIn(s) {
   return ""
 }
 
-// Sign-ins agy was found unable to use (a run it failed in a way only a
-// new sign-in mends), by fp: agy isn't run in the background for them
-// again; signing in again stores another and so another fp.
-const dead = new Set()
-
-export function noteDead(s) {
-  if (s?.state === "present" && s.fp) dead.add(s.fp)
-}
-
-export function isDead(s) {
-  return s?.state === "present" && dead.has(s.fp)
-}
-
 export function createSignInReader(getEnv = () => process.env) {
-const readForAccount = (options) => readStoredSignIn({ env: getEnv(), ...options })
+const readForAccount = () => readStoredSignIn({ env: getEnv() })
 let cached = null
 let reading = null
 
@@ -248,21 +233,19 @@ function storedSignInNow({ read = readForAccount } = {}) {
 }
 
 // backgroundBlocked is why agy must not be run for work nobody asked for
-// (a usage read, a model listing): its sign-in can't serve it and running
+// (such as a model listing): its sign-in can't serve it and running
 // it would start a Google sign-in. "" when it may run.
 async function backgroundBlocked(opts) {
-  const s = await storedSignIn(opts)
-  return cannotSignIn(s) || (isDead(s) ? "agy's sign-in no longer works" : "")
+  return cannotSignIn(await storedSignIn(opts))
 }
 
 // forgetStoredSignIn drops the cached read (after a sign-in, and in tests).
-function forgetStoredSignIn({ dead: clearDead = false } = {}) {
+function forgetStoredSignIn() {
   cached = null
   reading = null
-  if (clearDead) dead.clear()
 }
 
-return { storedSignIn, storedSignInNow, backgroundBlocked, forgetStoredSignIn, read: readForAccount }
+return { storedSignIn, storedSignInNow, backgroundBlocked, forgetStoredSignIn }
 }
 
 export const { storedSignIn, storedSignInNow, backgroundBlocked, forgetStoredSignIn } = createSignInReader()

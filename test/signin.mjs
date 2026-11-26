@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { backgroundBlocked, cannotSignIn, emailOf, forgetStoredSignIn, isDead, noteDead, parseStored, readStoredSignIn as readSharedSignIn, storedEmail as sharedEmail, storedSignIn, storedSignInNow } from "../signin.mjs"
+import { backgroundBlocked, cannotSignIn, emailOf, forgetStoredSignIn, parseStored, readStoredSignIn as readSharedSignIn, storedEmail as sharedEmail, storedSignIn, storedSignInNow } from "../signin.mjs"
 
 const shared = opts => ({ ...opts, env: { ...opts?.env, AGY_BRIDGE_PROFILE: "shared" } })
 const readStoredSignIn = opts => readSharedSignIn(shared(opts))
@@ -72,27 +72,21 @@ test("readStoredSignIn asks each system's keyring the way go-keyring stores it",
   assert.equal(calls.length, before)
 })
 
-test("one read serves a burst; a dead sign-in blocks background runs until another is stored", async () => {
-  forgetStoredSignIn({ dead: true })
+test("one read serves a burst; a missing sign-in blocks background runs", async () => {
+  forgetStoredSignIn()
   let reads = 0
-  let value = { state: "present", fp: "one", canRenew: true, expiresAt: 0, expired: false }
+  let value = { state: "present", canRenew: true, expiresAt: 0, expired: false }
   const read = async () => { reads++; return value }
   await Promise.all([storedSignIn({ read }), storedSignIn({ read }), storedSignIn({ read })])
   assert.equal(reads, 1)
   assert.equal(await backgroundBlocked({ read }), "")
-  noteDead(value)
-  assert.ok(isDead(value))
-  assert.match(await backgroundBlocked({ read }), /no longer works/)
-  value = { ...value, fp: "two" }
-  assert.equal(await backgroundBlocked({ read, fresh: true }), "")
   value = { state: "missing" }
   assert.match(await backgroundBlocked({ read, fresh: true }), /isn't signed in/)
-  forgetStoredSignIn({ dead: true })
-  assert.equal(isDead({ state: "present", fp: "one" }), false)
+  forgetStoredSignIn()
 })
 
 test("storedSignInNow answers from the last read without waiting, and reads again when it is old", async () => {
-  forgetStoredSignIn({ dead: true })
+  forgetStoredSignIn()
   let reads = 0
   let release
   const read = () => { reads++; return new Promise((r) => { release = r }) }
@@ -104,7 +98,7 @@ test("storedSignInNow answers from the last read without waiting, and reads agai
   await new Promise((r) => setTimeout(r, 0))
   assert.deepEqual(storedSignInNow({ read }), { state: "missing" })
   assert.equal(reads, 1)
-  forgetStoredSignIn({ dead: true })
+  forgetStoredSignIn()
 })
 
 // Archivemylife on X: the account showed as "API key", and signing in to

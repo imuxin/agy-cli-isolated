@@ -75,7 +75,6 @@ export async function createAccountPlugin(createRuntime, defaultRuntime, env = p
         const options = await plugin.auth.loader(getAuth, provider)
         return { ...options, apiKey: auth?.key ?? "agy" }
       },
-      usage: async (getAuth, provider) => (await forAccount(await getAuth?.())).auth.usage(getAuth, provider),
     },
     provider: {
       ...original.provider,

@@ -1,8 +1,8 @@
 // magpie-agy 插件的受控加载夹具（仅供仓内 test-catalog / test-usage-settlement /
 // test-repeat-batch 使用）。源自 configs 仓 scripts/continuity/tests/agy_bridge_testkit.mjs。
 //
-// 用 vm.SourceTextModule 在当前上下文里加载**真实**仓内 index.mjs，相对的 ./usage.mjs、
-// ./platform.mjs、./login.mjs 与 ./re2-pattern.mjs 链接到同目录的真实文件；生产文件只读，不落盘任何副本。
+// 用 vm.SourceTextModule 在当前上下文里加载**真实**仓内 index.mjs 及其本地依赖。
+// 生产文件只读，不落盘任何副本。
 // 边界替身：
 //   - node:child_process 的 spawn：`agy models` 与 `agy acp` 都换成进程内假子进程，
 //     后者讲真实 ACP JSON-RPC（initialize / session/new / set_model / prompt / cancel）。
@@ -29,8 +29,6 @@ const require = createRequire(import.meta.url)
 export const REPO_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 // AGY_BRIDGE_TEST_INDEX 只用于反向验证（让同一套用例跑修复前的旧副本，确认能抓到旧缺陷）。
 export const INDEX_FILE = process.env.AGY_BRIDGE_TEST_INDEX || path.join(REPO_DIR, "index.mjs")
-export const USAGE_FILE = path.join(REPO_DIR, "usage.mjs")
-export const MODEL_IDS_FILE = path.join(REPO_DIR, "model-ids.mjs")
 export const PLATFORM_FILE = path.join(REPO_DIR, "platform.mjs")
 export const ARRAY_ITEMS_FILE = path.join(REPO_DIR, "array-items.mjs")
 export const CLOAK_FILE = path.join(REPO_DIR, "cloak.mjs")
@@ -503,14 +501,6 @@ export async function createBridgeKit(options = {}) {
       setImmediate(() => child.stdout.emit("data", "https://accounts.google.com/synthetic-test\n"))
       return child
     }
-    if (options.usageReport && (args[0] === "--version" || args.includes("/usage"))) {
-      const child = new FakeChild(kit, file, args)
-      setImmediate(() => {
-        child.stdout.emit("data", Buffer.from(args[0] === "--version" ? "1.5.9\n" : JSON.stringify(options.usageReport(opts.env))))
-        child.finish(0)
-      })
-      return child
-    }
     if (args[0] === "acp" && args.includes("--help")) {
       // agy's flag usage goes to stderr; an older agy doesn't list the flag
       kit.helpSpawns.push({ file, args })
@@ -587,8 +577,6 @@ export async function createBridgeKit(options = {}) {
   }, { identifier: RUNTIME_SPECIFIER })
   const cache = new Map([[RUNTIME_SPECIFIER, runtime]])
   const indexUrl = pathToFileURL(path.join(REPO_DIR, "index.mjs")).href
-  const usageUrl = pathToFileURL(USAGE_FILE).href
-  const modelIdsUrl = pathToFileURL(MODEL_IDS_FILE).href
   const platformUrl = pathToFileURL(PLATFORM_FILE).href
   const arrayItemsUrl = pathToFileURL(ARRAY_ITEMS_FILE).href
   const cloakUrl = pathToFileURL(CLOAK_FILE).href
@@ -605,10 +593,8 @@ export async function createBridgeKit(options = {}) {
       : `node:${specifier}`
     if (cache.has(key)) return cache.get(key)
     let module
-    if (key === "./usage.mjs") module = sourceModule(USAGE_FILE, "", usageUrl)
-    else if (key === "./accounts.mjs") module = sourceModule(path.join(REPO_DIR, "accounts.mjs"), "", pathToFileURL(path.join(REPO_DIR, "accounts.mjs")).href)
+    if (key === "./accounts.mjs") module = sourceModule(path.join(REPO_DIR, "accounts.mjs"), "", pathToFileURL(path.join(REPO_DIR, "accounts.mjs")).href)
     else if (key === "./profile.mjs") module = sourceModule(path.join(REPO_DIR, "profile.mjs"), "", pathToFileURL(path.join(REPO_DIR, "profile.mjs")).href)
-    else if (key === "./model-ids.mjs") module = sourceModule(MODEL_IDS_FILE, "", modelIdsUrl)
     else if (key === "./platform.mjs") module = sourceModule(PLATFORM_FILE, "", platformUrl)
     else if (key === "./array-items.mjs") module = sourceModule(ARRAY_ITEMS_FILE, "", arrayItemsUrl)
     else if (key === "./cloak.mjs") module = sourceModule(CLOAK_FILE, "", cloakUrl)

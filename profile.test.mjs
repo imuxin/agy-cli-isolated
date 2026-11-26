@@ -6,7 +6,6 @@ import os from "node:os"
 import path from "node:path"
 import { isDeepStrictEqual } from "node:util"
 import { accountProfile, agyEnvironment, forgetPreparedProfiles, prepareProfile, profileEnv, ProfileError } from "./profile.mjs"
-import { createUsageReader, fetchUsage } from "./usage.mjs"
 import { backgroundBlocked, forgetStoredSignIn, readStoredSignIn, storedEmail, storedSignIn } from "./signin.mjs"
 
 const temporary = []
@@ -446,36 +445,6 @@ test("keychain preparation shares one deadline across security commands", () => 
   } finally {
     Date.now = originalNow
   }
-})
-
-test("usage includes sign-in preflight in its budget and never starts an expired query", async () => {
-  const originalNow = Date.now
-  let clock = originalNow()
-  try {
-    Date.now = () => clock
-    const reader = createUsageReader(() => "/synthetic/agy", {
-      env: { AGY_BRIDGE_PROFILE: "shared" },
-      timeoutMs: 10,
-      signIn: async ({ deadline }) => {
-        expect(deadline).toBe(clock + 10)
-        clock += 11
-        return { state: "present", fp: "budget", canRenew: true }
-      },
-    })
-    const result = await reader()
-    expect(result.error).toMatch(/timed out/)
-    expect(result.windows).toEqual([])
-    await expect(fetchUsage("/synthetic/agy", { env: { AGY_BRIDGE_PROFILE: "shared" }, deadline: clock - 1 })).rejects.toThrow(/timed out/)
-  } finally {
-    Date.now = originalNow
-  }
-})
-
-test("usage does not resolve or launch agy after a private credential read fails", async () => {
-  const reader = createUsageReader(() => { throw new Error("must not launch") }, {
-    signIn: async () => { throw new ProfileError("private credential read failed") },
-  })
-  expect(await reader()).toEqual({ windows: [], error: "agy profile: private credential read failed", signIn: "kept" })
 })
 
 test("prepareProfile reuses verified keychain state within TTL while still enforcing filesystem checks", () => {

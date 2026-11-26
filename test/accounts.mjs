@@ -22,19 +22,12 @@ async function signIn(plugin, email) {
   return saved(result)
 }
 
-for (const platform of ["darwin", "linux"]) test(`two accounts keep login, models, usage, tools and resumed sessions separate on ${platform}`, async () => {
-  const kit = await createBridgeKit({
-    ...isolated, platform,
-    usageReport: env => ({
-      status: "SUCCESS", command: { name: "usage", data: { groups: [{
-        name: env.AGY_BRIDGE_PROFILE_DIR.includes("accounts") ? "Account Model" : "Default Model",
-        buckets: [{ id: "weekly", name: "Weekly", window: "weekly", remaining_fraction: 0.75 }],
-      }] } },
-    }),
-  })
+for (const platform of ["darwin", "linux"]) test(`two accounts keep login, models, tools and resumed sessions separate on ${platform}`, async () => {
+  const kit = await createBridgeKit({ ...isolated, platform })
   try {
     const hostEnv = { ...kit.env }
     assert.equal(kit.plugin.auth.single, false)
+    assert.equal("usage" in kit.plugin.auth, false)
     const pending = await Promise.all([
       kit.plugin.auth.methods[0].authorize(),
       kit.plugin.auth.methods[0].authorize(),
@@ -61,13 +54,6 @@ for (const platform of ["darwin", "linux"]) test(`two accounts keep login, model
     assert.ok(catalogs[0]["gemini-account-a-high"])
     assert.equal(catalogs[0]["gemini-account-b-high"], undefined)
     assert.ok(catalogs[1]["gemini-account-b-high"])
-    const usage = await Promise.all(getters.map(get => kit.plugin.auth.usage(get)))
-    for (const report of usage) assert.equal(report.error, undefined, report.error)
-    assert.deepEqual(usage.map(u => u.windows[0]?.models), [
-      ["gemini-account-a", "gemini-account-a-high"],
-      ["gemini-account-b", "gemini-account-b-high"],
-    ])
-    assert.deepEqual(usage.map(u => u.windows[0].used), [25, 25])
 
     // Identical messages and client tool names still belong to two sessions.
     kit.defaultPrompt = async agent => {
@@ -120,7 +106,7 @@ test("a missing or failed account cannot use another account's credentials", asy
     const response = await send(loader, baseBody())
     assert.equal(response.status, 401)
     assert.equal(kit.acpSpawns.length, before)
-    assert.equal((await kit.plugin.auth.usage(async () => missing)).signIn, "expired")
+    assert.equal(response.headers.get("X-Magpie-Sign-In"), "expired")
     kit.defaultPrompt = async agent => { await agent.text("still signed in") }
     const validLoader = await kit.plugin.auth.loader(async () => good)
     assert.equal((await readSse(await send(validLoader, baseBody()))).stopReason, "end_turn")

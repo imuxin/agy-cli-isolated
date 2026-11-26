@@ -54,7 +54,9 @@ A1–A16、U1–U6 逐项并入。两边都有、且 `acb8d84` 写法更新的�
 | A15 | 防止 503 进程池饿死：并发上限默认值由 8 改为 16（`AGY_BRIDGE_MAX_PROCS`，`magpie.maxConcurrency` 同为 16）。`evictLRU` 分两级淘汰，第二级淘汰客户端已断开超过 30 秒（`AGY_BRIDGE_DETACHED_EVICT_MS`）的挂起工具回合，之后补交的合法 `tool_result` 会在新进程上重放。`acquireProcLocked` 遇到同会话旧回合时先判断过期并回收。历史压缩后变短的新请求判为 fork，回收旧回合 |
 | A16 | 长历史重放预算：`renderInitialPromptParts` 默认限制在 112 KiB（`AGY_BRIDGE_MAX_PROMPT_BYTES`）内。先为必保段预留预算（system 说明、`</conversation_history>` 闭合标签及禁止输出工具调用声明的文字、完整的 `<current_turn>`），历史按头尾保留，超长的 `[tool result]` 保留首尾、省略中间，保证不被 agy 的 128 KiB 尾部截断切掉 |
 
-## 4. `usage.mjs` 并入的修复（U1–U6）
+## 4. 旧版 `usage.mjs` 并入的修复（U1–U6）
+
+本节记录已移除的额度查询模块的来源与补丁。
 
 | 编号 | 内容 |
 |---|---|
@@ -93,6 +95,6 @@ A1–A16、U1–U6 逐项并入。两边都有、且 `acb8d84` 写法更新的�
 
 本地 fork 的包名、provider ID 和 ACP 客户端名统一为 `agy-cli-isolated`，与上游 `agy-cli` 区分。已有客户端和路由中的模型前缀应改成 `agy-cli-isolated/`，并在新 provider 下登录。工作目录、`AGY_BRIDGE_*` 配置名和凭据、会话存储路径保留，以免因改名丢失已有本地数据。
 
-本地改动新增 `profile.mjs`，macOS 默认通过专用 HOME、私有 Keychain、私有钥匙串偏好和 profile 内状态目录，将 Magpie 的单个账号与宿主 Antigravity 账号分离。公共启动入口、登录、凭据预检、邮箱、模型及额度查询使用同一环境。非 macOS 默认保留共享行为；显式 `AGY_BRIDGE_PROFILE=shared` 可恢复上游模式。
+本地改动新增 `profile.mjs`，macOS 默认通过专用 HOME、私有 Keychain、私有钥匙串偏好和 profile 内状态目录，将 Magpie 的单个账号与宿主 Antigravity 账号分离。公共启动入口、登录、凭据预检、邮箱和模型查询使用同一环境。非 macOS 默认保留共享行为；显式 `AGY_BRIDGE_PROFILE=shared` 可恢复上游模式。
 
 原生钥匙串隔离思路参考 [lefos13/paseo-plugin-antigravity-cli 的 accounts.ts](https://github.com/lefos13/paseo-plugin-antigravity-cli/blob/e52afdae91e063cf53805d54d5e19030b4527c0c/server/accounts.ts)。本实现使用最小独立目录、不镜像宿主 HOME，采用随机密码与失败即停止的处理，并提供合成凭据的原生验收脚本。配置、迁移、Keychain 生命周期及验证边界见 README 的独立账号章节。

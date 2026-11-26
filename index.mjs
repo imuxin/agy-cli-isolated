@@ -9,8 +9,6 @@ import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { createUsageReader } from "./usage.mjs"
-import { createModelIndex } from "./model-ids.mjs"
 import { cannotSignIn, createSignInReader, storedEmail } from "./signin.mjs"
 import { sanitizePatternFields } from "./re2-pattern.mjs"
 import { startLogin } from "./login.mjs"
@@ -187,9 +185,7 @@ const agyEnvironment = () => prepareEnvironment(getEnv())
 const spawnAgy = (file, args, options = {}) => spawnAgyProcess(file, args, {
   ...options, env: { ...getEnv(), ...options.env },
 })
-const signIn = createSignInReader(getEnv)
-const { backgroundBlocked, forgetStoredSignIn, storedSignIn, storedSignInNow } = signIn
-const { storeCatalogRows, modelsInGroup } = createModelIndex()
+const { backgroundBlocked, forgetStoredSignIn, storedSignIn, storedSignInNow } = createSignInReader(getEnv)
 const pool = new Map()
 const parked = new Map()
 const allProcs = new Set()
@@ -649,8 +645,6 @@ function buildModelCatalog(list) {
 }
 
 function fallbackModelCatalog(agyPath = null) {
-  // The usage reader names ids on its windows from the catalog being served.
-  storeCatalogRows(FALLBACK_MODELS)
   return { agyPath, list: FALLBACK_MODELS, catalog: null, offeredKey: null, isFallback: true, fetchedAt: 0, lastAttemptAt: null }
 }
 
@@ -723,8 +717,6 @@ function startingModelCatalog(agyPath) {
     acpOfferedModels = new Map(saved.offered.map(({ id, name }) => [id, name]))
     acpOfferedKey = [...acpOfferedModels.keys()].sort().join("\n")
   }
-  // The usage reader names ids on its windows from the catalog being served.
-  storeCatalogRows(saved.list)
   return { agyPath, list: saved.list, catalog: null, offeredKey: null, isFallback: false, fetchedAt: 0, lastAttemptAt: null }
 }
 
@@ -740,8 +732,6 @@ function useAgyPath(agyPath) {
 
 function storeListedCatalog(agyPath, list, lastAttemptAt) {
   saveCatalog(agyPath, { list })
-  // The usage reader names ids on its windows from the catalog being served.
-  storeCatalogRows(list)
   cachedModelCatalog = {
     agyPath,
     list,
@@ -6011,10 +6001,6 @@ async function googleSignIn(agy) {
 const createPlugin = async () => {
   // Fail before exposing a provider if its credential environment cannot be isolated.
   agyEnvironment()
-  const readUsage = createUsageReader(findAgy, {
-    env: getEnv(), resolveModels: modelsInGroup,
-    signIn: ({ deadline }) => storedSignIn({ read: () => signIn.read({ deadline }) }),
-  })
   keepAgyCurrent(findAgy)
   return {
     auth: {
@@ -6028,8 +6014,6 @@ const createPlugin = async () => {
         installed: async () => loginReady(findAgy()),
         install: ensureLoginAgy,
       },
-      // Magpie's usage hook; OpenCode ignores this extension. agy owns auth.
-      usage: async () => readUsage(),
       methods: [
         {
           // agy's own Google sign-in (`agy acp --login`): magpie opens its

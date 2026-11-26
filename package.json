@@ -19,8 +19,6 @@
     "mcp-server.mjs",
     "step-usage.mjs",
     "tool-schema.mjs", "tool-budget.mjs",
-    "usage.mjs",
-    "model-ids.mjs",
     "signin.mjs",
     "README.md",
     "README.en.md",

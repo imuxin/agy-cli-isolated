@@ -10,11 +10,13 @@
    - `name` 固定为 `"agy-cli-isolated"`。
    - `version` 采用 `<上游版本>-isolated.<修订号>` 格式（例如 `0.1.66-isolated.1`）。
    - 保留隔离版 `description` 与 `magpie.icon`。
-   - `files` 中同时保留隔离新增文件（如 `profile.mjs`）与上游新增文件。
+   - `files` 中保留隔离新增文件（如 `profile.mjs`）以及同步后使用的上游新增文件。
 2. **账号与钥匙串隔离**
-   - `profile.mjs` 及相关调用链（`index.mjs`、`platform.mjs`、`signin.mjs`、`usage.mjs`、`install.mjs`、`login.mjs` 等）的隔离逻辑和提示文案不得被上游覆盖丢失。
+   - `profile.mjs` 及相关调用链（`index.mjs`、`platform.mjs`、`signin.mjs`、`install.mjs`、`login.mjs` 等）的隔离逻辑和提示文案不得被上游覆盖丢失。
    - `test/testkit.mjs` 需同时保留 `./profile.mjs` 与上游新增模块的 `sourceModule` 映射。
-3. **测试门禁**
+3. **额度查询**
+   - 同步上游时保留隔离版对 `auth.usage` 及 `/usage` 额度查询模块的移除。
+4. **测试门禁**
    - 任何改动或合并完成后，必须运行 `bun test` 并确保全部用例通过。
 
 ## 上游同步与冲突处理规范

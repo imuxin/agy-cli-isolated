@@ -44,8 +44,6 @@ channel: Antigravity's models over ACP. The differences:
 - **Tool calls**: Antigravity ACP ends the turn with the call as the reply's
   `tool_calls`. This plugin feeds the client's result back into the same agy
   turn (see "Tool bridge" below).
-- **Usage**: this plugin reads agy's own `/usage` report; Antigravity ACP reads
-  the quota each reply carries.
 
 ## Tool bridge
 
@@ -96,8 +94,6 @@ MCP server. The control port listens on loopback only, with a token per process.
   (SillyTavern presets, "continue"/"impersonate", bot frameworks) are served
   instead of rejected; the session ledger stays aligned across turns. See
   "Assistant prefill" below.
-- **Usage visibility**: Magpie shows the agy subscription usage windows. They are
-  informational only; running out of quota does not block requests automatically.
 
 ## Assistant prefill
 
@@ -137,11 +133,8 @@ turn); the models a client gets remain agy's decision.
   An incompatible explicit `AGY_PATH` fails with instructions to update that path.
   Text and tool calls have been verified on 1.4.12
   and 1.5.0; image input needs 1.5.0.
-- A Magpie build with OpenCode-style provider plugin support. Usage reporting was
-  verified on Magpie 0.1.1599.
-- agy older than 1.4.12 is refused for sessions (see "Tool bridge"), and older
-  than 1.1.11 for usage queries too, because those builds can treat `/usage` as
-  an ordinary model prompt.
+- A Magpie build with OpenCode-style provider plugin support.
+- agy older than 1.4.12 is refused for sessions (see "Tool bridge").
 - **Auto-update**: the agy processes the plugin starts get
   `AGY_CLI_DISABLE_AUTO_UPDATE=true` by default, so the processes in the pool
   don't update one binary under each other. agy runs you start yourself are not
@@ -155,23 +148,23 @@ turn); the models a client gets remain agy's decision.
 
 ## Separate Magpie and Antigravity accounts on macOS and Linux
 
-This fork supports multiple private accounts on macOS and Linux. Each account added through Sign in with Google gets its own credentials, sessions and model catalog. Requests and usage queries follow the account selected in Magpie, while the Antigravity application and ordinary terminal `agy` keep their own account. Install this local fork with `magpie plugin add /absolute/path/to/agy-cli/opencode.mjs`; the community npm package does not include these changes. The fork uses provider ID `agy-cli-isolated`, distinct from upstream `agy-cli`. Host credentials are never copied.
+This fork supports multiple private accounts on macOS and Linux. Each account added through Sign in with Google gets its own credentials, sessions and model catalog. Requests follow the account selected in Magpie, while the Antigravity application and ordinary terminal `agy` keep their own account. Install this local fork with `magpie plugin add /absolute/path/to/agy-cli/opencode.mjs`; the community npm package does not include these changes. The fork uses provider ID `agy-cli-isolated`, distinct from upstream `agy-cli`. Host credentials are never copied.
 
 The default root is `$XDG_STATE_HOME/magpie-agy-bridge/profile`, or `~/.local/state/magpie-agy-bridge/profile`. On macOS it contains `home/.gemini`, a private `home/Library/Keychains/account.keychain-db`, private `home/Library/Preferences/com.apple.security.plist`, a `keychain-password` file (random, nonempty password, mode 0600), and `state/` for session and model indexes. Back up and protect the whole directory as credentials.
 
 New accounts live under `<default root>/x-agy-accounts/<UUID>/`, each with the complete structure above. Magpie saves only the local identifier `x-agy:<UUID>` and the email. agy owns the Google tokens. Sign in again for accounts previously saved as `agy:<UUID>`. The old `accounts/` directory stays on disk. Existing `agy` credentials use the host account on Linux and the original private default profile on macOS. Signing in with Google again creates a new profile. Removing an account from Magpie does not automatically delete its profile on disk.
 
-Login, model discovery, ACP probes, sessions, stored email and usage share the selected account's environment. Only child processes receive the private HOME/XDG directories. The host home is never mirrored. API key, ADC and Vertex authentication variables are removed from child environments so they cannot override the profile's Google account. Binary discovery and network/proxy settings still use the host environment.
+Login, model discovery, ACP probes, sessions and stored email share the selected account's environment. Only child processes receive the private HOME/XDG directories. The host home is never mirrored. API key, ADC and Vertex authentication variables are removed from child environments so they cannot override the profile's Google account. Binary discovery and network/proxy settings still use the host environment.
 
 Linux uses agy’s SSH-session file backend by setting `SSH_CONNECTION` for private agy children. Each account has a `home/.gemini/antigravity-cli/antigravity-oauth-token` file (0600). Protect backups of this file as credentials.
 
-On macOS, the plugin sets, unlocks and verifies the private default keychain and search list. Idle and sleep auto-lock are disabled to let long-lived ACP processes renew tokens; processes do not lock the keychain on exit because other processes may still use it. It stays unlocked until the OS session ends or it is manually locked, and is unlocked again before the next child starts. Initialization, conflicting configuration and credential-read failures stop login, requests or usage reads instead of using host credentials. Failed model discovery keeps the previous catalog or static model list without refreshing it.
+On macOS, the plugin sets, unlocks and verifies the private default keychain and search list. Idle and sleep auto-lock are disabled to let long-lived ACP processes renew tokens; processes do not lock the keychain on exit because other processes may still use it. It stays unlocked until the OS session ends or it is manually locked, and is unlocked again before the next child starts. Initialization, conflicting configuration and credential-read failures stop login or requests instead of using host credentials. Failed model discovery keeps the previous catalog or static model list without refreshing it.
 
 Set `AGY_BRIDGE_PROFILE_DIR` to an absolute path in the **Magpie process environment** to change the root, then restart. Do not change profiles in a running process. Existing `AGY_BRIDGE_GEMINI_DIR`, `AGY_BRIDGE_STATE_FILE` and `AGY_BRIDGE_CONVERSATIONS_DIR` overrides must match the profile's paths, or be removed. `AGY_BRIDGE_STORED_SIGNIN=skip` is unavailable in isolated mode. Login requires agy ≥ 1.5.0; signing in from an ordinary terminal does not sign in this profile.
 
 To restore upstream behavior, explicitly set `AGY_BRIDGE_PROFILE=shared`, remove `AGY_BRIDGE_PROFILE_DIR`, and restart. Windows defaults to shared mode.
 
-`bun test` uses a simulated agy to verify simultaneous account logins, separate models and usage, identical conversations with independent tool calls, session recovery, failed logins and legacy credentials. `node test/macos-profile.mjs` explicitly runs a native check with two temporary keychains and synthetic credentials. It checks HOME-based reads/writes, simulated refresh, process restarts and unchanged host keychain settings, then cleans up. It never signs in to Google or reads host credentials. Real agy OAuth, automatic token renewal, simultaneous application use, sleep/wake and long-running behavior still require acceptance with real accounts.
+`bun test` uses a simulated agy to verify simultaneous account logins, separate model catalogs, identical conversations with independent tool calls, session recovery, failed logins and legacy credentials. `node test/macos-profile.mjs` explicitly runs a native check with two temporary keychains and synthetic credentials. It checks HOME-based reads/writes, simulated refresh, process restarts and unchanged host keychain settings, then cleans up. It never signs in to Google or reads host credentials. Real agy OAuth, automatic token renewal, simultaneous application use, sleep/wake and long-running behavior still require acceptance with real accounts.
 
 ## Install
 
@@ -224,30 +217,9 @@ After installing, sign in from Magpie; no terminal needed. Update existing routi
 ## Platforms
 
 - **macOS and Linux**: supported.
-- **Native Windows**: supported for `.exe`, `.cmd` and `.bat` lookup and launch,
-  silent background update checks, and `magpie quota`. So far only the command
-  construction has unit tests; end-to-end runs on real Windows hardware are still
-  pending.
-
-## Usage quota
-
-```sh
-magpie quota agy-cli-isolated --json
-magpie quota refresh agy-cli-isolated --json
-```
-
-The numbers come from agy's own `/usage` report for whichever account is signed
-in to the CLI, broken down by model group. The plugin never writes Google tokens
-or sends them anywhere; it always reports the account agy is signed in to. A window with no
-measurable data shows "Limits not available" rather than a fake 0% or 100%.
-
-A signed-out agy opens Google's sign-in page in the browser when it runs, so
-before running agy for usage or the model list, the plugin looks at agy's stored
-sign-in in the system keychain (macOS) or Credential Manager (Windows) and only
-reads whether one is there and when it ends. With none, with one that has ended
-and can't be renewed, or with one agy already failed on, agy is not run: the
-account shows its sign-in has expired until you sign in again. Other failed
-usage reads wait 10 minutes before the next try, doubling up to 6 hours.
+- **Native Windows**: supported for `.exe`, `.cmd` and `.bat` lookup and launch
+  and silent background update checks. So far only the command construction has
+  unit tests. End-to-end runs on real Windows hardware are still pending.
 
 ## Environment variables
 
@@ -268,7 +240,6 @@ usage reads wait 10 minutes before the next try, doubling up to 6 hours.
 | `AGY_BRIDGE_START_TIMEOUT_MS` / `_TURN_TIMEOUT_MS` / `_TOOL_TIMEOUT_MS` | 60 s / 5 min / 30 min | Limits for process startup, agy silence, and waiting on a client tool result |
 | `AGY_BRIDGE_DETACHED_EVICT_MS` | 30000 | How long a suspended tool turn whose client disconnected may keep its pool slot |
 | `AGY_BRIDGE_MAX_PROMPT_BYTES` | 114688 (112 KiB) | Byte budget for the replayed history prompt |
-| `AGY_BRIDGE_USAGE_TIMEOUT_MS` | 15000 | Total time budget for a usage query, capped at 18000 |
 | `AGY_BRIDGE_STORED_SIGNIN` | unset | `skip` disables stored sign-in reads in shared mode only |
 | `AGY_BRIDGE_MCP_TRACE` | unset | Writes MCP channel traffic to the given file; for debugging only |
 | `AGY_CLI_DISABLE_AUTO_UPDATE` | `true` for the plugin's agy processes | agy's own variable. When you set it, agy gets your value; see "Requirements" |

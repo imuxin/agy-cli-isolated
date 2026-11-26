@@ -32,7 +32,6 @@ OpenCode、Claude Code 等客户端经由 Magpie 调用 agy 向本插件开放�
   才在字节预算内重放历史。
 - **工具调用**：Antigravity ACP 把工具调用作为回复的 `tool_calls` 结束这一轮。本插件把
   客户端的结果送回同一轮 agy 对话（见下文「工具桥接」）。
-- **额度**：本插件读 agy 自己的 `/usage` 报告；Antigravity ACP 读每次回复带的配额。
 
 ## 工具桥接
 
@@ -67,7 +66,6 @@ agy 连接 `--ide-mcp-port` 时会运行 `nc 127.0.0.1 <端口>`。插件在 agy
   都在客户端侧完成。
 - **助手预填**：以 assistant 结尾的预填请求（SillyTavern 预设、继续写、bot 框架）不再
   400 拒绝：预填留在本轮并渲染为续写载体，会话跨轮保持对齐，见下文「助手预填」。
-- **额度查看**：在 Magpie 里查看 agy 订阅的用量窗口，仅作展示，额度耗尽时不会自动拦截请求。
 
 ## 助手预填（assistant prefill）
 
@@ -94,9 +92,8 @@ agy 连接 `--ide-mcp-port` 时会运行 `nc 127.0.0.1 <端口>`。插件在 agy
   `~/.local/share/magpie-agy-cli/agy`；Windows 是 `%LOCALAPPDATA%\magpie-agy-cli\agy.exe`）。
   容器的数据目录在 /config 卷里，重启后还在。共享模式优先使用你自己安装的 agy；隔离模式优先使用插件管理的副本。Magpie 登录需要支持 `agy acp --login` 的 agy（1.5.0 起）。插件会先检查帮助信息；隔离模式下若 CLI 缺失或不支持登录，会自动下载安装独立副本，不覆盖本机 CLI。显式 `AGY_PATH` 指向不兼容版本时会报错，需更新该路径。
   文本与工具调用已在 1.4.12 和 1.5.0 上验证；图片输入需要 1.5.0。
-- 支持 OpenCode 风格 provider 插件的 Magpie。额度查询已在 Magpie 0.1.1599 上验证。
-- agy 版本低于 1.4.12 时，会话会被拒绝（见「工具桥接」）；低于 1.1.11 时，额度查询也会被
-  拒绝，以免旧版本把 `/usage` 当成模型提示词。
+- 支持 OpenCode 风格 provider 插件的 Magpie。
+- agy 版本低于 1.4.12 时，会话会被拒绝（见「工具桥接」）。
 - **自动更新**：插件启动的 agy 进程默认带 `AGY_CLI_DISABLE_AUTO_UPDATE=true`，免得进程池里的
   多个进程同时更新同一个可执行文件。你自己在终端里运行的 agy 不受影响，照常更新。你自己设置了
   `AGY_CLI_DISABLE_AUTO_UPDATE`（包括设为 `false`）时，插件原样使用你的值。只通过本插件使用
@@ -116,7 +113,7 @@ magpie plugin add /absolute/path/to/agy-cli/opencode.mjs
 
 本地 fork 的 provider 是 `agy-cli-isolated`，与上游的 `agy-cli` 分开显示。
 
-重启 Magpie，在 `agy-cli-isolated` 的 Sign in 中选择「使用 Google 登录」添加账号。每个账号有独立的登录凭证、会话和模型缓存。请求和额度查询使用 Magpie 选中的账号，Antigravity 应用与普通终端的账号不受影响。插件不会复制本机凭据。
+重启 Magpie，在 `agy-cli-isolated` 的 Sign in 中选择「使用 Google 登录」添加账号。每个账号有独立的登录凭证、会话和模型缓存。请求使用 Magpie 选中的账号，Antigravity 应用与普通终端的账号不受影响。插件不会复制本机凭据。
 
 默认 profile 是 `$XDG_STATE_HOME/magpie-agy-bridge/profile`，未设置 XDG 时为 `~/.local/state/magpie-agy-bridge/profile`：
 
@@ -131,17 +128,17 @@ magpie plugin add /absolute/path/to/agy-cli/opencode.mjs
 
 新增账号存放在 `<默认 profile>/x-agy-accounts/<UUID>/`，每个目录都有上述完整结构。Magpie 只保存 `x-agy:<UUID>` 这个本地标识和邮箱，Google 令牌仍由 agy 保管。使用旧 `agy:<UUID>` 的账号需要重新登录。旧 `accounts/` 目录保留在磁盘上。Linux 上原有的 `agy` 记录继续使用宿主账号。macOS 上的 `agy` 使用原默认私有 profile，可通过「使用原有默认账号」重新关联。重新进行 Google 登录会创建新的 profile；移除 Magpie 中的账户记录不会自动删除磁盘上的 profile。
 
-同一账号的登录、模型查询、ACP 探测、正式会话、邮箱与额度读取使用同一环境。插件不修改自身的 HOME，也不链接本机 `.gemini`、Library 或其他设置。子进程的 XDG 目录也归属 profile；API key、ADC 与 Vertex 认证变量会从子进程环境中移除，避免覆盖所选 Google 账号。二进制查找和代理等网络配置仍沿用宿主环境。
+同一账号的登录、模型查询、ACP 探测、正式会话与邮箱读取使用同一环境。插件不修改自身的 HOME，也不链接本机 `.gemini`、Library 或其他设置。子进程的 XDG 目录也归属 profile；API key、ADC 与 Vertex 认证变量会从子进程环境中移除，避免覆盖所选 Google 账号。二进制查找和代理等网络配置仍沿用宿主环境。
 
 Linux 隔离模式沿用上游 agy-cli 的方式，对 agy 子进程设置 `SSH_CONNECTION`，让 agy 使用私有 HOME 下的令牌文件。凭证以文件形式保存，备份时应当作密码保管。
 
-macOS Keychain 使用随机非空密码；插件在启动子进程前设置、解锁并核对专用默认钥匙串与搜索列表。为允许长时间运行的 ACP 自动刷新令牌，私有 Keychain 不设空闲或睡眠自动锁定；进程退出时不会主动锁定，以免打断其他使用同一 profile 的进程。它会保持解锁，直到系统会话结束或你手动锁定；下次启动插件进程时会重新解锁。整个 profile 含可用凭据，应作为一个整体保管和备份。初始化、配置冲突或凭据读取失败会停止相关登录、请求或额度操作，不会回退到本机账号；模型目录刷新失败时停止刷新，保留原有目录或静态模型列表。
+macOS Keychain 使用随机非空密码；插件在启动子进程前设置、解锁并核对专用默认钥匙串与搜索列表。为允许长时间运行的 ACP 自动刷新令牌，私有 Keychain 不设空闲或睡眠自动锁定；进程退出时不会主动锁定，以免打断其他使用同一 profile 的进程。它会保持解锁，直到系统会话结束或你手动锁定；下次启动插件进程时会重新解锁。整个 profile 含可用凭据，应作为一个整体保管和备份。初始化、配置冲突或凭据读取失败会停止相关登录或请求，不会回退到本机账号；模型目录刷新失败时停止刷新，保留原有目录或静态模型列表。
 
 需要更换目录时，为 **Magpie 进程**设置绝对路径 `AGY_BRIDGE_PROFILE_DIR`，然后重启。不要在运行中切换 profile。`AGY_BRIDGE_GEMINI_DIR`、`AGY_BRIDGE_STATE_FILE`、`AGY_BRIDGE_CONVERSATIONS_DIR` 若已设置，必须与上述 profile 内路径一致，否则移除这些覆盖值；`AGY_BRIDGE_STORED_SIGNIN=skip` 在隔离模式下不可用。
 
 显式设置 `AGY_BRIDGE_PROFILE=shared` 并移除 `AGY_BRIDGE_PROFILE_DIR` 可以恢复上游共享账号行为，重启后生效。Windows 默认使用共享模式。内嵌登录需要 agy ≥ 1.5.0；在普通终端登录 `agy` 不会登录这个独立 profile。
 
-验证范围：`bun test` 使用模拟 agy 验证双账号并行登录、模型和额度隔离、相同对话的工具调用、会话恢复、失败账号与旧账号兼容；`node test/macos-profile.mjs` 会创建两个临时真实 Keychain，以合成凭据验证 HOME 读写隔离、模拟刷新、进程重启和宿主配置不变，结束后清理。它不会登录 Google 或读取宿主凭据。真实 agy 的 OAuth、令牌自动刷新、双客户端并行、睡眠唤醒和长时间运行仍需用实际账号验收。
+验证范围：`bun test` 使用模拟 agy 验证双账号并行登录、模型隔离、相同对话的工具调用、会话恢复、失败账号与旧账号兼容；`node test/macos-profile.mjs` 会创建两个临时真实 Keychain，以合成凭据验证 HOME 读写隔离、模拟刷新、进程重启和宿主配置不变，结束后清理。它不会登录 Google 或读取宿主凭据。真实 agy 的 OAuth、令牌自动刷新、双客户端并行、睡眠唤醒和长时间运行仍需用实际账号验收。
 
 ## 安装
 
@@ -181,24 +178,8 @@ magpie plugin add /absolute/path/to/agy-cli/opencode.mjs
 ## 平台
 
 - **macOS、Linux**：支持。
-- **原生 Windows**：支持 `.exe`、`.cmd`、`.bat` 的查找与启动，后台更新检查不弹控制台窗口，
-  并支持 `magpie quota`。目前只有命令构造的单元测试，尚未在 Windows 实机完成端到端验证。
-
-## 额度
-
-```sh
-magpie quota agy-cli-isolated --json
-magpie quota refresh agy-cli-isolated --json
-```
-
-额度数据来自 agy 自己的 `/usage` 报告，显示的是当前 agy 登录账号的订阅窗口，按模型组
-分别列出。插件不写 Google 令牌，也不把它发往任何地方，查询的始终是 agy 当前登录的账号。没有可测量数据的窗口会显示
-"Limits not available"，而不是 0% 或 100%。
-
-未登录的 agy 一运行就会在浏览器里打开 Google 登录页，所以插件在为额度或模型列表运行 agy 之前，
-先看系统钥匙串（macOS）或凭据管理器（Windows）里 agy 存的登录，只读有没有、何时到期。没有登录、
-登录已过期且无法续期、或 agy 已在这份登录上失败过时，不运行 agy，账号显示登录已过期，直到重新登录。
-其他失败的额度查询等 10 分钟再试，每次翻倍，最长 6 小时。
+- **原生 Windows**：支持 `.exe`、`.cmd`、`.bat` 的查找与启动，后台更新检查不弹控制台窗口。
+  目前只有命令构造的单元测试，尚未在 Windows 实机完成端到端验证。
 
 ## 环境变量
 
@@ -219,7 +200,6 @@ magpie quota refresh agy-cli-isolated --json
 | `AGY_BRIDGE_START_TIMEOUT_MS` / `_TURN_TIMEOUT_MS` / `_TOOL_TIMEOUT_MS` | 60 秒 / 5 分钟 / 30 分钟 | 进程启动、agy 无输出、等待客户端工具结果的超时 |
 | `AGY_BRIDGE_DETACHED_EVICT_MS` | 30000 | 客户端已断开的挂起工具回合，最多占用进程池槽位这么久 |
 | `AGY_BRIDGE_MAX_PROMPT_BYTES` | 114688（112 KiB） | 重放历史提示词的字节预算 |
-| `AGY_BRIDGE_USAGE_TIMEOUT_MS` | 15000 | 额度查询的总时间预算，最高 18000 |
 | `AGY_BRIDGE_STORED_SIGNIN` | 未设置 | 仅共享模式可设为 `skip`，让插件不读 agy 存的登录 |
 | `AGY_BRIDGE_MCP_TRACE` | 未设置 | 把 MCP 通道流量写入指定文件，仅用于排查 |
 | `AGY_CLI_DISABLE_AUTO_UPDATE` | 插件启动的 agy 设为 `true` | agy 自己的变量。你设置了就原样传给 agy，见「环境要求」 |
@@ -258,8 +238,6 @@ agy 自己的系统提示词，只剩插件的一行工具说明和客户端的�
 - **Sign in 失败或 agy 报登录相关错误**：在 Magpie 中重新登录。macOS 隔离模式下普通终端的 `agy` 使用另一套账号；如果凭据格式损坏，可选「换一个 Google 账号」重新登录。
 - **HTTP 503**：进程池满。提高 `AGY_BRIDGE_MAX_PROCS` 和 Providers 页的 Concurrency，
   或者减少同时进行的会话。
-- **额度显示 "Limits not available" 或报版本错误**：该窗口没有可测量的数据；版本错误则
-  把 agy 升级到 1.1.11 以上。
 - **图片请求返回 HTTP 400**：当前 agy 没有声明图片能力（需要 1.5.0 以上）。另外只接受
   内联 base64，URL 图片和 PDF 等二进制文档都会被拒绝。
 - **回复里出现 "Agent execution terminated due to error."**：这是 agy 的错误标记。插件会

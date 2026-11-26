@@ -11,7 +11,7 @@ const wrapper = path.join(here, `agy${suffix}${process.platform === "win32" ? ".
 const logPath = path.join(here, `fake-agy-log${suffix}`)
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fake-agy-state-"))
 // Nobody set AGY_CLI_DISABLE_AUTO_UPDATE: the plugin's children get "true".
-// A value the user set is passed on as written (test/platform.mjs, test/usage.mjs).
+// A value the user set is passed on as written (test/platform.mjs).
 const originalAutoUpdate = process.env.AGY_CLI_DISABLE_AUTO_UPDATE
 delete process.env.AGY_CLI_DISABLE_AUTO_UPDATE
 delete process.env.AGY_BRIDGE_MINIMAL_AGENT
@@ -54,13 +54,6 @@ const send = value => process.stdout.write(JSON.stringify(value) + "\n")
 
 if (argv.includes("--version")) {
   process.stdout.write("1.5.0\n")
-  process.exit(0)
-}
-if (argv.includes("/usage")) {
-  log({ type: "usage", cwd: process.cwd(), args: argv })
-  send({ status: "SUCCESS", command: { name: "usage", data: { groups: [{
-    name: "Gemini Models", buckets: [{ id: "gemini-weekly", window: "weekly", remaining_fraction: 0.6, reset_time: "2026-10-27T00:00:00Z" }],
-  }] } } })
   process.exit(0)
 }
 const signedOut = path.join(process.env.FAKE_AGY_STATE, "signed-out")
@@ -706,16 +699,7 @@ const echoTool = {
 const model = "agy-cli-isolated/gemini-test"
 const legacyModel = "agy-cli-isolated/gemini-test-low"
 
-{
-  const usage = await plugin.auth.usage(async () => ({ key: "agy" }), {})
-  check("auth.usage exposes measured CLI quota", usage.windows?.[0]?.used === 40 && usage.windows[0].name === "Gemini · 7 days")
-  check("auth.usage preserves explicit cadence and reset", usage.windows?.[0]?.span === 604800 && usage.windows[0].resetsAt === "2026-10-27T00:00:00.000Z")
-  check("auth.usage is display-only and keeps bridge auth", usage.windows?.[0]?.aside === true && usage.signIn === "kept")
-  check("auth.usage does not invent Google account identity", !usage.user && !usage.plan)
-  const calls = logs().filter(event => event.type === "usage")
-  check("auth.usage uses a separate cleaned workspace", calls.length === 1 && !fs.existsSync(calls[0].cwd))
-  check("auth.usage runs only the native usage command", calls[0]?.args.includes("/usage") && calls[0]?.args.includes("magpie-usage"))
-}
+check("auth has no account quota hook", !("usage" in plugin.auth))
 
 {
   // models() serves a cached catalog and refreshes it in the background. Point
